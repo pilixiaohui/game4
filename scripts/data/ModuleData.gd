@@ -56,7 +56,7 @@ static func make(
 	p_throughput: int = 1,
 	p_cycle_time: float = 10.0,
 	p_external_interface: bool = false,
-	p_tags: Array[String] = [],
+	p_tags: Array = [],
 	p_rarity: String = "common",
 	p_description: String = ""
 ):
@@ -77,7 +77,9 @@ static func make(
 	data.required_throughput = max(1, _rate_total(p_output_rates))
 	data.base_cycle_time = p_cycle_time
 	data.external_interface = p_external_interface
-	data.tags = p_tags.duplicate()
+	data.tags.clear()
+	for tag in p_tags:
+		data.tags.append(String(tag))
 	data.rarity = p_rarity
 	data.description_short = p_description
 	return data

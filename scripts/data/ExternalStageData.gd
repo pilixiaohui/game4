@@ -22,8 +22,8 @@ static func make(
 	p_danger: float,
 	p_food_reward: Vector2i,
 	p_soil_reward: Vector2i,
-	p_cards: Array[String],
-	p_tags: Array[String] = []
+	p_cards: Array,
+	p_tags: Array = []
 ):
 	var data = load("res://scripts/data/ExternalStageData.gd").new()
 	data.id = p_id
@@ -34,6 +34,10 @@ static func make(
 	data.danger = p_danger
 	data.base_food_reward = p_food_reward
 	data.base_soil_reward = p_soil_reward
-	data.card_reward_pool = p_cards.duplicate()
-	data.tags = p_tags.duplicate()
+	data.card_reward_pool.clear()
+	for card_id in p_cards:
+		data.card_reward_pool.append(String(card_id))
+	data.tags.clear()
+	for tag in p_tags:
+		data.tags.append(String(tag))
 	return data

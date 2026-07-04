@@ -1,35 +1,31 @@
 extends Node
 
-const GameStateScript := preload("res://scripts/GameState.gd")
-const NestGridScript := preload("res://scripts/NestGrid.gd")
 const NestModuleScript := preload("res://scripts/NestModule.gd")
 const ModuleCardScript := preload("res://scripts/ModuleCard.gd")
 const AntAgentScript := preload("res://scripts/AntAgent.gd")
-const ObjectPopupScript := preload("res://scripts/ui/ObjectPopup.gd")
-const RewardChoiceScript := preload("res://scripts/ui/RewardChoice.gd")
 
 const CELL_SIZE := 56
 
-var state
-var world_root: Node2D
-var grid
-var module_layer: Node2D
-var ant_layer: Node2D
-var ui_layer: CanvasLayer
-var resource_label: Label
-var hand_tray: HBoxContainer
-var feedback_label: Label
-var popup
-var reward_choice
-var simulation_timer: Timer
+@onready var state = $GameState
+@onready var grid = $WorldRoot/NestGrid
+@onready var module_layer: Node2D = $WorldRoot/ModuleLayer
+@onready var ant_layer: Node2D = $WorldRoot/AntTrafficLayer
+@onready var resource_label: Label = $UILayer/TopResourceBar
+@onready var hand_tray: HBoxContainer = $UILayer/BottomHandTray
+@onready var feedback_label: Label = $UILayer/FeedbackQueue
+@onready var popup = $UILayer/ObjectPopup
+@onready var reward_choice = $UILayer/RewardChoice
+@onready var simulation_timer: Timer = $SimulationTimer
+
 var selected_card_id: String = ""
 var selected_rotation: int = 0
 var selected_module_uid: String = ""
 var module_nodes: Dictionary = {}
+var ant_agents: Dictionary = {}
 
 func _ready() -> void:
-	_build_scene_tree()
-	_connect_state()
+	grid.configure(Vector2i(10, 8), CELL_SIZE)
+	_wire_signals()
 	state.reset_game()
 	_rebuild_modules()
 	_refresh_all()
@@ -43,75 +39,7 @@ func _process(_delta: float) -> void:
 	if selected_card_id != "":
 		_update_preview()
 
-func _build_scene_tree() -> void:
-	state = GameStateScript.new()
-	state.name = "GameState"
-	add_child(state)
-
-	world_root = Node2D.new()
-	world_root.name = "WorldRoot"
-	world_root.position = Vector2(120, 84)
-	add_child(world_root)
-
-	var camera = Camera2D.new()
-	camera.name = "Camera2D"
-	camera.position = Vector2(280, 220)
-	camera.enabled = true
-	world_root.add_child(camera)
-
-	grid = NestGridScript.new()
-	grid.name = "NestGrid"
-	grid.configure(Vector2i(10, 8), CELL_SIZE)
-	world_root.add_child(grid)
-
-	module_layer = Node2D.new()
-	module_layer.name = "ModuleLayer"
-	world_root.add_child(module_layer)
-
-	ant_layer = Node2D.new()
-	ant_layer.name = "AntTrafficLayer"
-	world_root.add_child(ant_layer)
-
-	ui_layer = CanvasLayer.new()
-	ui_layer.name = "UILayer"
-	add_child(ui_layer)
-
-	resource_label = Label.new()
-	resource_label.name = "TopResourceBar"
-	resource_label.position = Vector2(16, 12)
-	resource_label.add_theme_font_size_override("font_size", 20)
-	ui_layer.add_child(resource_label)
-
-	hand_tray = HBoxContainer.new()
-	hand_tray.name = "BottomHandTray"
-	hand_tray.position = Vector2(16, 598)
-	hand_tray.size = Vector2(1120, 112)
-	ui_layer.add_child(hand_tray)
-
-	feedback_label = Label.new()
-	feedback_label.name = "FeedbackQueue"
-	feedback_label.position = Vector2(16, 548)
-	feedback_label.add_theme_font_size_override("font_size", 16)
-	ui_layer.add_child(feedback_label)
-
-	popup = ObjectPopupScript.new()
-	popup.name = "ObjectPopup"
-	popup.position = Vector2(980, 96)
-	ui_layer.add_child(popup)
-
-	reward_choice = RewardChoiceScript.new()
-	reward_choice.name = "RewardChoice"
-	reward_choice.position = Vector2(360, 230)
-	ui_layer.add_child(reward_choice)
-
-	simulation_timer = Timer.new()
-	simulation_timer.name = "SimulationTimer"
-	simulation_timer.wait_time = 1.0
-	simulation_timer.autostart = true
-	simulation_timer.timeout.connect(func() -> void: state.simulate_tick(1.0))
-	add_child(simulation_timer)
-
-func _connect_state() -> void:
+func _wire_signals() -> void:
 	grid.grid_clicked.connect(_on_grid_clicked)
 	state.resource_changed.connect(_on_resource_changed)
 	state.hand_changed.connect(_on_hand_changed)
@@ -121,12 +49,13 @@ func _connect_state() -> void:
 	state.feedback.connect(_on_feedback)
 	popup.external_stage_selected.connect(_on_external_stage_selected)
 	reward_choice.reward_picked.connect(_on_reward_picked)
+	simulation_timer.timeout.connect(func() -> void: state.simulate_tick(1.0))
 
 func _refresh_all() -> void:
 	grid.set_excavated(state.excavated)
 	_on_resource_changed(state.resources, state.capacities, state.workers)
 	_on_hand_changed(state.hand)
-	_refresh_ants()
+	_sync_ants()
 
 func _on_resource_changed(resources: Dictionary, capacities: Dictionary, workers: Dictionary) -> void:
 	resource_label.text = "Food %d/%d   Soil %d/%d   Workers %d free / %d total   Load %d%%" % [
@@ -139,7 +68,6 @@ func _on_resource_changed(resources: Dictionary, capacities: Dictionary, workers
 		int(round(float(workers["satisfaction"]) * 100.0)),
 	]
 	_refresh_hand_affordability()
-	_refresh_ants()
 
 func _on_hand_changed(hand: Array[String]) -> void:
 	for child in hand_tray.get_children():
@@ -200,12 +128,14 @@ func _on_grid_clicked(cell: Vector2i) -> void:
 		selected_card_id = ""
 		selected_rotation = 0
 		grid.clear_preview()
+		_sync_ants()
 	else:
 		_on_feedback(result["reason"])
 
 func _on_module_placed(module_state: Dictionary) -> void:
 	_create_module_node(module_state)
 	grid.set_excavated(state.excavated)
+	_sync_ants()
 
 func _on_module_status_changed(module_state: Dictionary) -> void:
 	var uid = String(module_state["uid"])
@@ -214,6 +144,7 @@ func _on_module_status_changed(module_state: Dictionary) -> void:
 	if uid == selected_module_uid:
 		var data = state.module_defs[module_state["module_id"]]
 		popup.show_module(module_state, data, state.external_stages)
+	_sync_ants()
 
 func _rebuild_modules() -> void:
 	for child in module_layer.get_children():
@@ -249,6 +180,7 @@ func _clear_module_selection() -> void:
 func _on_external_stage_selected(stage_id: String) -> void:
 	var result = state.start_external_stage(stage_id)
 	_on_feedback("Exploration started" if result["ok"] else result["reason"])
+	_sync_ants()
 
 func _on_reward_choice_ready(cards: Array[String]) -> void:
 	reward_choice.show_choices(cards, state.module_defs)
@@ -265,12 +197,21 @@ func _on_reward_picked(index: int) -> void:
 func _on_feedback(message: String) -> void:
 	feedback_label.text = message
 
-func _refresh_ants() -> void:
+func _sync_ants() -> void:
 	if ant_layer == null:
 		return
-	for child in ant_layer.get_children():
-		child.queue_free()
-	for path in state.active_transport_paths():
-		var ant = AntAgentScript.new()
-		ant.setup(path, 95.0)
-		ant_layer.add_child(ant)
+	var seen := {}
+	for route in state.active_transport_routes():
+		var key := String(route["key"])
+		seen[key] = true
+		if not ant_agents.has(key):
+			var ant = AntAgentScript.new()
+			ant.setup(route["points"], 95.0)
+			ant_layer.add_child(ant)
+			ant_agents[key] = ant
+		else:
+			ant_agents[key].update_path(route["points"], 95.0)
+	for key in ant_agents.keys():
+		if not seen.has(key):
+			ant_agents[key].queue_free()
+			ant_agents.erase(key)

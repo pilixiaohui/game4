@@ -1,6 +1,65 @@
-[gd_scene load_steps=2 format=3 uid="uid://antcitymain"]
+[gd_scene load_steps=6 format=3 uid="uid://antcitymain"]
 
 [ext_resource type="Script" path="res://scripts/Main.gd" id="1_main"]
+[ext_resource type="Script" path="res://scripts/GameState.gd" id="2_state"]
+[ext_resource type="Script" path="res://scripts/NestGrid.gd" id="3_grid"]
+[ext_resource type="Script" path="res://scripts/ui/ObjectPopup.gd" id="4_popup"]
+[ext_resource type="Script" path="res://scripts/ui/RewardChoice.gd" id="5_reward"]
 
 [node name="Main" type="Node"]
 script = ExtResource("1_main")
+
+[node name="GameState" type="Node" parent="."]
+script = ExtResource("2_state")
+
+[node name="WorldRoot" type="Node2D" parent="."]
+position = Vector2(120, 84)
+
+[node name="Camera2D" type="Camera2D" parent="WorldRoot"]
+position = Vector2(280, 220)
+enabled = true
+
+[node name="NestGrid" type="Node2D" parent="WorldRoot"]
+script = ExtResource("3_grid")
+
+[node name="ModuleLayer" type="Node2D" parent="WorldRoot"]
+
+[node name="AntTrafficLayer" type="Node2D" parent="WorldRoot"]
+
+[node name="UILayer" type="CanvasLayer" parent="."]
+
+[node name="TopResourceBar" type="Label" parent="UILayer"]
+offset_left = 16.0
+offset_top = 12.0
+offset_right = 620.0
+offset_bottom = 42.0
+
+[node name="BottomHandTray" type="HBoxContainer" parent="UILayer"]
+offset_left = 16.0
+offset_top = 598.0
+offset_right = 1136.0
+offset_bottom = 710.0
+
+[node name="FeedbackQueue" type="Label" parent="UILayer"]
+offset_left = 16.0
+offset_top = 548.0
+offset_right = 840.0
+offset_bottom = 578.0
+
+[node name="ObjectPopup" type="PanelContainer" parent="UILayer"]
+offset_left = 980.0
+offset_top = 96.0
+offset_right = 1240.0
+offset_bottom = 276.0
+script = ExtResource("4_popup")
+
+[node name="RewardChoice" type="PanelContainer" parent="UILayer"]
+offset_left = 360.0
+offset_top = 230.0
+offset_right = 920.0
+offset_bottom = 380.0
+script = ExtResource("5_reward")
+
+[node name="SimulationTimer" type="Timer" parent="."]
+wait_time = 1.0
+autostart = true

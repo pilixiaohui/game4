@@ -11,6 +11,11 @@ func setup(points: Array[Vector2], p_speed: float = 90.0) -> void:
 	progress = 0.0
 	queue_redraw()
 
+func update_path(points: Array[Vector2], p_speed: float = 90.0) -> void:
+	path = points.duplicate()
+	speed = p_speed
+	progress = fmod(progress, _path_length())
+
 func _process(delta: float) -> void:
 	if path.size() < 2:
 		return

@@ -17,6 +17,8 @@ const ExternalStageDataScript := preload("res://scripts/data/ExternalStageData.g
 const GRID_SIZE := Vector2i(10, 8)
 const CORE_ORIGIN := Vector2i(4, 3)
 const MAX_HAND := 7
+const MODULE_CATALOG_PATH := "res://data/modules.json"
+const EXTERNAL_STAGE_CATALOG_PATH := "res://data/external_stages.json"
 
 var module_defs: Dictionary = {}
 var external_stages: Dictionary = {}
@@ -30,6 +32,7 @@ var occupied: Dictionary = {}
 var reward_choices: Array[String] = []
 var active_external_run: Dictionary = {}
 var draw_count: int = 0
+var catalog_errors: Array[String] = []
 
 func _ready() -> void:
 	if module_defs.is_empty():
@@ -61,26 +64,117 @@ func reset_game() -> void:
 	_emit_state()
 
 func _build_catalogs() -> void:
-	var C = ModuleDataScript
+	catalog_errors.clear()
 	module_defs.clear()
-	module_defs["queen_core"] = C.make("queen_core", "Queen Core", "core", Vector2i(2, 2), _all_connectors(), 0, 0, 0, {}, {"food": 50, "soil": 50, "workers": 6}, 99, 10.0, false, ["core"], "starter", "City heart and worker capacity.")
-	module_defs["straight_corridor"] = C.make("straight_corridor", "Straight Corridor", "corridor", Vector2i(1, 1), {C.TOP: true, C.BOTTOM: true}, 0, 2, 0, {}, {}, 2, 10.0, false, ["path"], "common", "Moves resources along a straight tunnel.")
-	module_defs["corner_corridor"] = C.make("corner_corridor", "Corner Corridor", "corridor", Vector2i(1, 1), {C.TOP: true, C.RIGHT: true}, 0, 2, 0, {}, {}, 2, 10.0, false, ["path"], "common", "Turns a tunnel around a corner.")
-	module_defs["fungus_farm"] = C.make("fungus_farm", "Fungus Farm", "production", Vector2i(2, 2), _all_connectors(), 4, 6, 2, {"food": 3}, {}, 2, 10.0, false, ["food"], "common", "Produces food while connected.")
-	module_defs["digging_room"] = C.make("digging_room", "Digging Room", "production", Vector2i(2, 1), _all_connectors(), 2, 5, 1, {"soil": 3}, {}, 2, 12.0, false, ["soil"], "common", "Produces soil and expands the nest.")
-	module_defs["storage_chamber"] = C.make("storage_chamber", "Storage Chamber", "storage", Vector2i(2, 1), _all_connectors(), 2, 8, 1, {}, {"food": 30, "soil": 30}, 1, 10.0, false, ["storage"], "common", "Raises food and soil capacity.")
-	module_defs["nursery"] = C.make("nursery", "Nursery", "capacity", Vector2i(2, 1), _all_connectors(), 10, 8, 2, {}, {"workers": 3}, 1, 10.0, false, ["workers"], "common", "Raises worker capacity.")
-	module_defs["sorter"] = C.make("sorter", "Sorter", "support", Vector2i(2, 1), {C.LEFT: true, C.RIGHT: true}, 6, 10, 1, {}, {}, 3, 10.0, false, ["support"], "uncommon", "Improves adjacent production rooms.")
-	module_defs["surface_entrance"] = C.make("surface_entrance", "Surface Entrance", "entrance", Vector2i(1, 2), _all_connectors(), 12, 12, 1, {}, {}, 2, 10.0, true, ["external"], "common", "Unlocks outside exploration.")
-
 	external_stages.clear()
-	external_stages["near_debris"] = ExternalStageDataScript.make("near_debris", "Near Debris Belt", 20.0, 2, 4, 0.12, Vector2i(8, 16), Vector2i(0, 4), ["straight_corridor", "fungus_farm", "storage_chamber"])
-	external_stages["loose_soil"] = ExternalStageDataScript.make("loose_soil", "Loose Soil Edge", 30.0, 3, 5, 0.25, Vector2i(2, 8), Vector2i(10, 20), ["corner_corridor", "digging_room", "storage_chamber"])
-	external_stages["old_root"] = ExternalStageDataScript.make("old_root", "Old Root Hollow", 45.0, 4, 8, 0.30, Vector2i(6, 14), Vector2i(6, 12), ["nursery", "sorter", "surface_entrance"], ["rare"])
+	var module_rows = _load_catalog_array(MODULE_CATALOG_PATH)
+	for row in module_rows:
+		_load_module_definition(row)
+	var stage_rows = _load_catalog_array(EXTERNAL_STAGE_CATALOG_PATH)
+	for row in stage_rows:
+		_load_external_stage(row)
+	_validate_catalogs()
+	for error in catalog_errors:
+		push_error(error)
 
-func _all_connectors() -> Dictionary:
-	var C = ModuleDataScript
-	return {C.TOP: true, C.RIGHT: true, C.BOTTOM: true, C.LEFT: true}
+func _load_catalog_array(path: String) -> Array:
+	if not FileAccess.file_exists(path):
+		catalog_errors.append("Missing catalog: %s" % path)
+		return []
+	var parsed = JSON.parse_string(FileAccess.get_file_as_string(path))
+	if typeof(parsed) != TYPE_ARRAY:
+		catalog_errors.append("Catalog must be a JSON array: %s" % path)
+		return []
+	return parsed
+
+func _load_module_definition(row: Dictionary) -> void:
+	var id := String(row.get("id", ""))
+	if id == "":
+		catalog_errors.append("Module entry missing id")
+		return
+	if module_defs.has(id):
+		catalog_errors.append("Duplicate module id: %s" % id)
+		return
+	var connectors := _connectors_from_row(row.get("connectors", {}), "module %s" % id)
+	var size := _vector2i_from_array(row.get("size", [1, 1]), Vector2i.ONE)
+	module_defs[id] = ModuleDataScript.make(
+		id,
+		String(row.get("display_name", id)),
+		String(row.get("category", "")),
+		size,
+		connectors,
+		int(row.get("build_cost_food", 0)),
+		int(row.get("build_cost_soil", 0)),
+		int(row.get("worker_need", 0)),
+		Dictionary(row.get("output_rates", {})),
+		Dictionary(row.get("storage", {})),
+		int(row.get("throughput", 1)),
+		float(row.get("base_cycle_time", 10.0)),
+		bool(row.get("external_interface", false)),
+		Array(row.get("tags", [])),
+		String(row.get("rarity", "common")),
+		String(row.get("description_short", ""))
+	)
+
+func _load_external_stage(row: Dictionary) -> void:
+	var id := String(row.get("id", ""))
+	if id == "":
+		catalog_errors.append("External stage entry missing id")
+		return
+	if external_stages.has(id):
+		catalog_errors.append("Duplicate external stage id: %s" % id)
+		return
+	external_stages[id] = ExternalStageDataScript.make(
+		id,
+		String(row.get("display_name", id)),
+		float(row.get("duration", 20.0)),
+		int(row.get("worker_required", 2)),
+		int(row.get("food_cost", 4)),
+		float(row.get("danger", 0.15)),
+		_vector2i_from_array(row.get("base_food_reward", [0, 0]), Vector2i.ZERO),
+		_vector2i_from_array(row.get("base_soil_reward", [0, 0]), Vector2i.ZERO),
+		Array(row.get("card_reward_pool", [])),
+		Array(row.get("tags", []))
+	)
+
+func _connectors_from_row(value, context: String) -> Dictionary:
+	var connectors := ModuleDataScript._blank_connectors()
+	if typeof(value) != TYPE_DICTIONARY:
+		catalog_errors.append("Invalid connectors for %s" % context)
+		return connectors
+	for direction in value.keys():
+		if not ModuleDataScript.DIRECTIONS.has(direction):
+			catalog_errors.append("Invalid connector '%s' for %s" % [direction, context])
+			continue
+		connectors[direction] = bool(value[direction])
+	return connectors
+
+func _vector2i_from_array(value, fallback: Vector2i) -> Vector2i:
+	if typeof(value) != TYPE_ARRAY or value.size() < 2:
+		return fallback
+	return Vector2i(int(value[0]), int(value[1]))
+
+func _validate_catalogs() -> void:
+	for required_id in ["queen_core", "straight_corridor", "surface_entrance"]:
+		if not module_defs.has(required_id):
+			catalog_errors.append("Missing required module id: %s" % required_id)
+	for module_id in module_defs.keys():
+		var data = module_defs[module_id]
+		var has_connector := false
+		for direction in ModuleDataScript.DIRECTIONS:
+			if bool(data.connectors.get(direction, false)):
+				has_connector = true
+		if not has_connector:
+			catalog_errors.append("Module has no connectors: %s" % module_id)
+		if data.size.x <= 0 or data.size.y <= 0:
+			catalog_errors.append("Module has invalid size: %s" % module_id)
+	for stage_id in external_stages.keys():
+		var stage = external_stages[stage_id]
+		if stage.card_reward_pool.size() != 3:
+			catalog_errors.append("External stage must expose exactly three rewards: %s" % stage_id)
+		for card_id in stage.card_reward_pool:
+			if not module_defs.has(card_id):
+				catalog_errors.append("External stage %s references unknown reward module: %s" % [stage_id, card_id])
 
 func _excavate_initial_area() -> void:
 	for x in range(2, 8):
@@ -256,6 +350,12 @@ func get_path_to_core(module_index: int) -> Array[int]:
 
 func active_transport_paths() -> Array[Array]:
 	var paths: Array[Array] = []
+	for route in active_transport_routes():
+		paths.append(route["points"])
+	return paths
+
+func active_transport_routes() -> Array[Dictionary]:
+	var routes: Array[Dictionary] = []
 	for i in range(1, modules.size()):
 		var module = modules[i]
 		if String(module.get("status", "")) in ["running", "busy", "constrained"]:
@@ -264,8 +364,18 @@ func active_transport_paths() -> Array[Array]:
 				var points: Array[Vector2] = []
 				for module_index in path:
 					points.append(module_center_world(module_index))
-				paths.append(points)
-	return paths
+				routes.append({
+					"key": _transport_route_key(i, path),
+					"module_uid": String(module["uid"]),
+					"points": points,
+				})
+	return routes
+
+func _transport_route_key(module_index: int, path: Array[int]) -> String:
+	var ids: Array[String] = []
+	for index in path:
+		ids.append(String(modules[index]["uid"]))
+	return "%s:%s" % [modules[module_index]["uid"], "|".join(ids)]
 
 func module_center_world(module_index: int, cell_size: int = 56) -> Vector2:
 	var module = modules[module_index]

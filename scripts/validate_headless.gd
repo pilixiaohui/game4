@@ -23,6 +23,7 @@ func _run() -> void:
 	state.reset_game()
 
 	# Invariant: scene boot creates the authoritative game state and object layers.
+	_assert(state.catalog_errors.is_empty(), "Catalog ids, connectors, and reward references validate")
 	_assert(state.modules.size() == 1, "Queen core starts placed")
 	_assert(state.hand.has("straight_corridor"), "Opening hand has a corridor")
 

@@ -1,0 +1,38 @@
+[
+  {
+    "id": "near_debris",
+    "display_name": "Near Debris Belt",
+    "duration": 20.0,
+    "worker_required": 2,
+    "food_cost": 4,
+    "danger": 0.12,
+    "base_food_reward": [8, 16],
+    "base_soil_reward": [0, 4],
+    "card_reward_pool": ["straight_corridor", "fungus_farm", "storage_chamber"],
+    "tags": []
+  },
+  {
+    "id": "loose_soil",
+    "display_name": "Loose Soil Edge",
+    "duration": 30.0,
+    "worker_required": 3,
+    "food_cost": 5,
+    "danger": 0.25,
+    "base_food_reward": [2, 8],
+    "base_soil_reward": [10, 20],
+    "card_reward_pool": ["corner_corridor", "digging_room", "storage_chamber"],
+    "tags": []
+  },
+  {
+    "id": "old_root",
+    "display_name": "Old Root Hollow",
+    "duration": 45.0,
+    "worker_required": 4,
+    "food_cost": 8,
+    "danger": 0.30,
+    "base_food_reward": [6, 14],
+    "base_soil_reward": [6, 12],
+    "card_reward_pool": ["nursery", "sorter", "surface_entrance"],
+    "tags": ["rare"]
+  }
+]
