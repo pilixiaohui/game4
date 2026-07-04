@@ -46,15 +46,25 @@ func _unhandled_input(event: InputEvent) -> void:
 			grid_clicked.emit(cell)
 
 func _draw() -> void:
+	var bounds := Rect2(Vector2(-18, -44), Vector2(grid_size * cell_size) + Vector2(36, 82))
+	draw_rect(bounds, Color(0.13, 0.08, 0.045, 1.0), true)
+	draw_rect(Rect2(Vector2(-18, -44), Vector2(bounds.size.x, 32)), Color(0.20, 0.34, 0.18, 1.0), true)
+	draw_line(Vector2(-18, -12), Vector2(bounds.end.x, -12), Color(0.42, 0.28, 0.14, 1.0), 4.0, true)
+	draw_rect(bounds, Color(0.50, 0.33, 0.17, 0.75), false, 4.0)
 	for x in range(grid_size.x):
 		for y in range(grid_size.y):
 			var cell = Vector2i(x, y)
 			var rect = Rect2(Vector2(cell * cell_size), Vector2(cell_size, cell_size))
 			var fill = Color(0.11, 0.085, 0.055, 1.0)
 			if excavated.has(_cell_key(cell)):
-				fill = Color(0.24, 0.16, 0.09, 1.0)
+				fill = Color(0.28, 0.18, 0.09, 1.0)
 			draw_rect(rect.grow(-1), fill, true)
 			draw_rect(rect.grow(-1), Color(0.42, 0.30, 0.18, 0.55), false, 1.0)
+	for key in excavated.keys():
+		var parts := String(key).split(",")
+		if parts.size() == 2:
+			var center := Vector2(Vector2i(int(parts[0]), int(parts[1])) * cell_size) + Vector2(cell_size, cell_size) * 0.5
+			draw_circle(center, 4.0, Color(0.55, 0.38, 0.18, 0.22))
 	if bool(preview.get("active", false)):
 		_draw_preview()
 

@@ -13,9 +13,16 @@ func _run() -> void:
 	var main = main_scene.instantiate()
 	root.add_child(main)
 	await process_frame
+	_assert(main.get_script() != null, "Main script is attached and compiled")
 	_assert(main.get_node_or_null("GameState") != null, "Main creates GameState")
 	_assert(main.get_node_or_null("WorldRoot/NestGrid") != null, "Main creates Node2D nest grid")
+	_assert(main.get_node_or_null("WorldRoot/AntTrafficLayer") != null, "Main creates transport path layer")
 	_assert(main.get_node_or_null("UILayer/BottomHandTray") != null, "Main creates hand tray UI")
+	_assert(main.get_node("UILayer/BottomHandTray").get_child_count() > 0, "Main populates module hand UI")
+	_assert(main.get_node_or_null("UILayer/StartOverlay") != null, "Main creates start overlay")
+	_assert(main.get_node("UILayer/StartOverlay").visible, "Start overlay is visible on first screen")
+	_assert(main.get_node_or_null("UILayer/ModalDimmer") != null, "Main creates modal dimmer")
+	_assert(not main.get_node("UILayer/ModalDimmer").visible, "Modal dimmer starts hidden")
 	main.queue_free()
 
 	var state = GameStateScript.new()

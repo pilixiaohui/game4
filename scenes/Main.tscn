@@ -1,10 +1,11 @@
-[gd_scene load_steps=6 format=3 uid="uid://antcitymain"]
+[gd_scene load_steps=7 format=3 uid="uid://antcitymain"]
 
 [ext_resource type="Script" path="res://scripts/Main.gd" id="1_main"]
 [ext_resource type="Script" path="res://scripts/GameState.gd" id="2_state"]
 [ext_resource type="Script" path="res://scripts/NestGrid.gd" id="3_grid"]
 [ext_resource type="Script" path="res://scripts/ui/ObjectPopup.gd" id="4_popup"]
 [ext_resource type="Script" path="res://scripts/ui/RewardChoice.gd" id="5_reward"]
+[ext_resource type="Script" path="res://scripts/AntTrafficLayer.gd" id="6_traffic"]
 
 [node name="Main" type="Node"]
 script = ExtResource("1_main")
@@ -25,6 +26,7 @@ script = ExtResource("3_grid")
 [node name="ModuleLayer" type="Node2D" parent="WorldRoot"]
 
 [node name="AntTrafficLayer" type="Node2D" parent="WorldRoot"]
+script = ExtResource("6_traffic")
 
 [node name="UILayer" type="CanvasLayer" parent="."]
 
@@ -53,12 +55,49 @@ offset_right = 1240.0
 offset_bottom = 276.0
 script = ExtResource("4_popup")
 
+[node name="ModalDimmer" type="ColorRect" parent="UILayer"]
+visible = false
+offset_right = 1280.0
+offset_bottom = 720.0
+color = Color(0.02, 0.015, 0.01, 0.72)
+
 [node name="RewardChoice" type="PanelContainer" parent="UILayer"]
-offset_left = 360.0
-offset_top = 230.0
-offset_right = 920.0
-offset_bottom = 380.0
+offset_left = 255.0
+offset_top = 170.0
+offset_right = 1025.0
+offset_bottom = 520.0
 script = ExtResource("5_reward")
+
+[node name="StartOverlay" type="ColorRect" parent="UILayer"]
+offset_right = 1280.0
+offset_bottom = 720.0
+color = Color(0.05, 0.035, 0.025, 0.95)
+
+[node name="StartPanel" type="PanelContainer" parent="UILayer/StartOverlay"]
+offset_left = 380.0
+offset_top = 190.0
+offset_right = 900.0
+offset_bottom = 450.0
+
+[node name="VBox" type="VBoxContainer" parent="UILayer/StartOverlay/StartPanel"]
+offset_left = 16.0
+offset_top = 16.0
+offset_right = 504.0
+offset_bottom = 244.0
+theme_override_constants/separation = 14
+
+[node name="Title" type="Label" parent="UILayer/StartOverlay/StartPanel/VBox"]
+text = "Ant Nest City"
+horizontal_alignment = 1
+
+[node name="Subtitle" type="Label" parent="UILayer/StartOverlay/StartPanel/VBox"]
+text = "Build a living underground nest from connected modules."
+horizontal_alignment = 1
+autowrap_mode = 3
+
+[node name="StartButton" type="Button" parent="UILayer/StartOverlay/StartPanel/VBox"]
+custom_minimum_size = Vector2(0, 48)
+text = "Start New Nest"
 
 [node name="SimulationTimer" type="Timer" parent="."]
 wait_time = 1.0

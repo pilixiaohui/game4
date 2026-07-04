@@ -37,7 +37,8 @@ func _draw() -> void:
 		return
 	var rect = _local_rect()
 	draw_rect(rect.grow(-3), _fill_color(), true)
-	draw_rect(rect.grow(-3), Color(0.08, 0.05, 0.035, 1.0), false, 2.0)
+	draw_rect(rect.grow(-3), Color(0.05, 0.03, 0.02, 1.0), false, 3.0)
+	draw_rect(rect.grow(-8), Color(1.0, 0.80, 0.34, 0.20), false, 1.5)
 	if selected:
 		draw_rect(rect.grow(-1), Color(1.0, 0.86, 0.35, 1.0), false, 3.0)
 	_draw_connectors(rect)
@@ -75,7 +76,8 @@ func _draw_connectors(rect: Rect2) -> void:
 	}
 	for direction in connectors.keys():
 		if bool(connectors[direction]):
-			draw_circle(points[direction], 5.0, Color(0.95, 0.78, 0.32, 1.0))
+			draw_circle(points[direction], 7.0, Color(1.0, 0.92, 0.32, 1.0))
+			draw_circle(points[direction], 3.0, Color(0.25, 0.15, 0.04, 1.0))
 
 func _draw_status_bar(rect: Rect2) -> void:
 	var efficiency = clampf(float(module_state.get("efficiency", 1.0)), 0.0, 1.0)
