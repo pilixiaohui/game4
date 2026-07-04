@@ -1,0 +1,8 @@
+.godot/
+.godot-home/
+.godot_home/
+*.tmp
+
+# The Godot editor binary is larger than GitHub's normal 100 MB blob limit.
+# Store it outside ordinary Git or use Git LFS when available.
+tools/godot/Godot_v*_linux.x86_64

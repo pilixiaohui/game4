@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+LOCAL_GODOT_BIN="$ROOT_DIR/tools/godot/Godot_v4.7-stable_linux.x86_64"
+DAEMON_CACHE_GODOT_BIN="/home/zxh/multica_workspaces/08f1f1d8-4dde-4a61-82cc-b40419781ef6/f31b0f39/workdir/tools/godot/Godot_v4.7-stable_linux.x86_64"
+
+export XDG_DATA_HOME="${XDG_DATA_HOME:-$ROOT_DIR/.godot-home/share}"
+export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$ROOT_DIR/.godot-home/config}"
+export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$ROOT_DIR/.godot-home/cache}"
+
+mkdir -p "$XDG_DATA_HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME"
+
+if [ -x "$LOCAL_GODOT_BIN" ]; then
+	exec "$LOCAL_GODOT_BIN" "$@"
+fi
+
+if command -v godot4 >/dev/null 2>&1; then
+	exec godot4 "$@"
+fi
+
+if command -v godot >/dev/null 2>&1; then
+	exec godot "$@"
+fi
+
+if [ -x "$DAEMON_CACHE_GODOT_BIN" ]; then
+	exec "$DAEMON_CACHE_GODOT_BIN" "$@"
+fi
+
+echo "Godot executable not found. Expected repo-local binary at $LOCAL_GODOT_BIN." >&2
+echo "Install Godot 4.7 stable there, install godot/godot4 on PATH, or run on the publishing daemon with its cached binary available." >&2
+exit 127
