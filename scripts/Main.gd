@@ -158,7 +158,7 @@ func _on_module_status_changed(module_state: Dictionary) -> void:
 		module_nodes[uid].update_state(module_state)
 	if uid == selected_module_uid:
 			var data = state.module_defs[module_state["module_id"]]
-			popup.show_module(module_state, data, state.external_stages, state.active_external_run, state.external_stage_previews())
+			popup.show_module(module_state, data, state.external_stages, state.active_external_run, state.external_stage_previews(), _city_status())
 	_sync_ants()
 
 func _rebuild_modules() -> void:
@@ -185,7 +185,7 @@ func _on_module_pressed(uid: String) -> void:
 		if module_state["uid"] == uid:
 			var data = state.module_defs[module_state["module_id"]]
 			module_nodes[uid].set_selected(true)
-			popup.show_module(module_state, data, state.external_stages, state.active_external_run, state.external_stage_previews())
+			popup.show_module(module_state, data, state.external_stages, state.active_external_run, state.external_stage_previews(), _city_status())
 			return
 
 func _clear_module_selection() -> void:
@@ -247,7 +247,7 @@ func _refresh_selected_popup() -> void:
 	for module_state in state.modules:
 		if module_state["uid"] == selected_module_uid:
 			var data = state.module_defs[module_state["module_id"]]
-			popup.show_module(module_state, data, state.external_stages, state.active_external_run, state.external_stage_previews())
+			popup.show_module(module_state, data, state.external_stages, state.active_external_run, state.external_stage_previews(), _city_status())
 			return
 
 func _pressure_summary() -> String:
@@ -263,3 +263,10 @@ func _pressure_summary() -> String:
 	if best_value <= 0.05:
 		return "stable"
 	return "%s %d%%" % [best_key.replace("_pressure", ""), int(round(best_value * 100.0))]
+
+func _city_status() -> Dictionary:
+	return {
+		"workers": state.workers.duplicate(true),
+		"city_pressure": state.city_pressure.duplicate(true),
+		"production_impact": state.production_impact_summary(),
+	}

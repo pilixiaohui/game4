@@ -36,15 +36,15 @@ func _run() -> void:
 		await process_frame
 	await _capture("04_transport.png")
 
-	_grant_build_resources(state)
+	_supply_ui_smoke_resources(state)
 	for i in range(80):
 		state.simulate_tick(1.0)
 	_assert(state.request_place_module("storage_chamber", Vector2i(6, 3), 0)["ok"], "Storage placed")
-	_grant_build_resources(state)
+	_supply_ui_smoke_resources(state)
 	for i in range(80):
 		state.simulate_tick(1.0)
 	_assert(state.request_place_module("nursery", Vector2i(2, 5), 0)["ok"], "Nursery placed")
-	_grant_build_resources(state)
+	_supply_ui_smoke_resources(state)
 	for i in range(80):
 		state.simulate_tick(1.0)
 	_assert(state.request_place_module("surface_entrance", Vector2i(6, 4), 0)["ok"], "Entrance placed")
@@ -67,7 +67,7 @@ func _run() -> void:
 	await _capture("07_reward_modal.png")
 
 	if failures.is_empty():
-		print("Visual smoke passed. Screenshots: %s" % ProjectSettings.globalize_path(SCREENSHOT_DIR))
+		print("Visual smoke passed. Uses supplied resources and seeded success for UI coverage only. Screenshots: %s" % ProjectSettings.globalize_path(SCREENSHOT_DIR))
 		quit(0)
 	else:
 		for failure in failures:
@@ -90,6 +90,6 @@ func _module_uid(state, module_id: String) -> String:
 			return String(module_state["uid"])
 	return ""
 
-func _grant_build_resources(state) -> void:
+func _supply_ui_smoke_resources(state) -> void:
 	state.resources["food"] = state.capacities["food"]
 	state.resources["soil"] = state.capacities["soil"]

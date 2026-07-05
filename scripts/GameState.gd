@@ -557,6 +557,35 @@ func external_stage_previews() -> Dictionary:
 		previews[stage_id] = external_stage_preview(stage_id)
 	return previews
 
+func production_impact_summary() -> Dictionary:
+	var production_count := 0
+	var constrained_count := 0
+	var total_efficiency := 0.0
+	var worst_blocker := "none"
+	for module in modules:
+		var data = module_defs[module["module_id"]]
+		if data.output_rates.is_empty():
+			continue
+		production_count += 1
+		var efficiency := float(module.get("efficiency", 1.0))
+		total_efficiency += efficiency
+		var blocker := String(module.get("last_blocker", "none"))
+		if efficiency < 0.98 or blocker != "none":
+			constrained_count += 1
+		if blocker != "none":
+			worst_blocker = blocker
+	var average := 1.0
+	if production_count > 0:
+		average = total_efficiency / float(production_count)
+	return {
+		"production_count": production_count,
+		"constrained_count": constrained_count,
+		"average_efficiency": average,
+		"worker_satisfaction": float(workers.get("satisfaction", 1.0)),
+		"workers_exploring": int(workers.get("exploring", 0)),
+		"worst_blocker": worst_blocker,
+	}
+
 func choose_reward(index: int) -> Dictionary:
 	if index < 0 or index >= reward_choices.size():
 		return {"ok": false, "reason": "Reward index out of range"}
@@ -684,19 +713,94 @@ func _generate_reward_choices(stage, result: String) -> void:
 	reward_choices.clear()
 	reward_choice_context.clear()
 	var pressure_key := _highest_pressure_key()
-	_add_best_reward_for_pressure(stage.card_reward_pool, pressure_key)
-	_add_best_reward_for_tags(stage.card_reward_pool, stage.tags, "Matches the outside site theme")
-	_add_weighted_reward(stage.card_reward_pool, "%s:%s:%d" % [stage.id, result, draw_count])
+	var pool := _expanded_reward_pool(stage, pressure_key)
+	_add_best_reward_for_pressure(pool, pressure_key)
+	_add_best_reward_for_tags(pool, stage.tags, "Matches the outside site theme")
+	_add_weighted_reward(pool, stage, "%s:%s:%d" % [stage.id, result, draw_count])
 	if result == "partial" and reward_choices.size() > 0:
 		var card_id := reward_choices[0]
 		reward_choice_context[card_id] = "%s after a partial return" % String(reward_choice_context.get(card_id, "Stabilizes the city"))
-	for card_id in stage.card_reward_pool:
+	for card_id in pool:
 		if reward_choices.size() >= 3:
 			break
 		if module_defs.has(card_id) and not reward_choices.has(card_id):
 			reward_choices.append(card_id)
 			reward_choice_context[card_id] = "Keeps options open"
+	_break_fixed_reward_set(stage.card_reward_pool, pool, pressure_key)
 	draw_count += 1
+
+func _expanded_reward_pool(stage, pressure_key: String) -> Array[String]:
+	var pool: Array[String] = []
+	for card_id in stage.card_reward_pool:
+		_append_unique_card(pool, String(card_id))
+	for card_id in module_defs.keys():
+		var data = module_defs[card_id]
+		if data.rarity == "starter" or data.category == "core":
+			continue
+		var matches_stage := false
+		for tag in data.reward_tags:
+			if stage.tags.has(tag):
+				matches_stage = true
+		for tag in data.tags:
+			if stage.tags.has(tag):
+				matches_stage = true
+		if matches_stage:
+			_append_unique_card(pool, String(card_id))
+	for card_id in module_defs.keys():
+		var data = module_defs[card_id]
+		if data.rarity == "starter" or data.category == "core":
+			continue
+		if data.solves_pressure.has(pressure_key):
+			_append_unique_card(pool, String(card_id))
+			continue
+		for tag in data.reward_tags:
+			if _tag_matches_pressure(String(tag), pressure_key):
+				_append_unique_card(pool, String(card_id))
+	return pool
+
+func _append_unique_card(pool: Array[String], card_id: String) -> void:
+	if module_defs.has(card_id) and not pool.has(card_id):
+		pool.append(card_id)
+
+func _break_fixed_reward_set(base_pool: Array[String], expanded_pool: Array[String], pressure_key: String) -> void:
+	var base_trio: Array[String] = []
+	for card_id in base_pool:
+		if base_trio.size() >= 3:
+			break
+		base_trio.append(String(card_id))
+	if reward_choices.size() != 3 or not _same_card_set(reward_choices, base_trio):
+		return
+	var replacement := _best_non_base_reward(base_trio, expanded_pool, pressure_key)
+	if replacement == "":
+		return
+	var removed := String(reward_choices.pop_back())
+	reward_choice_context.erase(removed)
+	reward_choices.append(replacement)
+	reward_choice_context[replacement] = "%s; changes this site's usual choices" % _pressure_reason(pressure_key)
+
+func _same_card_set(left: Array[String], right: Array[String]) -> bool:
+	if left.size() != right.size():
+		return false
+	for card_id in left:
+		if not right.has(card_id):
+			return false
+	return true
+
+func _best_non_base_reward(base_trio: Array[String], expanded_pool: Array[String], pressure_key: String) -> String:
+	var best_id := ""
+	var best_score := -9999.0
+	for card_id in expanded_pool:
+		if base_trio.has(card_id) or reward_choices.has(card_id):
+			continue
+		var data = module_defs[card_id]
+		var score := float(data.solves_pressure.get(pressure_key, 0)) * 3.0
+		for tag in data.reward_tags:
+			if _tag_matches_pressure(String(tag), pressure_key):
+				score += 1.0
+		if score > best_score:
+			best_score = score
+			best_id = card_id
+	return best_id
 
 func _add_best_reward_for_pressure(pool: Array[String], pressure_key: String) -> void:
 	var best_id := ""
@@ -737,11 +841,10 @@ func _add_best_reward_for_tags(pool: Array[String], tags: Array[String], reason:
 		reward_choices.append(best_id)
 		reward_choice_context[best_id] = reason
 
-func _add_weighted_reward(pool: Array[String], seed: String) -> void:
+func _add_weighted_reward(pool: Array[String], stage_data, seed: String) -> void:
 	var weighted: Array[Dictionary] = []
 	var total := 0.0
 	var pressure_key := _highest_pressure_key()
-	var stage_data = external_stages[active_external_run.get("id", "")]
 	for card_id in pool:
 		if not module_defs.has(card_id) or reward_choices.has(card_id):
 			continue
@@ -888,14 +991,15 @@ func _recalculate_city_stats() -> void:
 	capacities["soil"] = max(50, capacities["soil"])
 	resources["food"] = min(resources["food"], capacities["food"])
 	resources["soil"] = min(resources["soil"], capacities["soil"])
-	var exploring = int(active_external_run.get("worker_required", 0))
-	var total_demand = worker_demand + exploring
+	var exploring := int(active_external_run.get("worker_required", 0))
+	var base_satisfaction: float = 1.0 if worker_demand == 0 else min(1.0, float(max(0, total_workers - exploring)) / float(worker_demand))
+	var exploration_drag: float = 0.0 if total_workers == 0 else float(exploring) / float(total_workers) * 0.35
 	workers = {
 		"total": total_workers,
 		"demand": worker_demand,
 		"exploring": exploring,
 		"free": max(0, total_workers - worker_demand - exploring),
-		"satisfaction": 1.0 if worker_demand == 0 else min(1.0, float(max(0, total_workers - exploring)) / float(worker_demand)),
+		"satisfaction": clampf(base_satisfaction - exploration_drag, 0.0, 1.0),
 	}
 	_rebuild_transport_routes()
 	_recalculate_city_pressure()

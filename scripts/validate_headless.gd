@@ -203,6 +203,38 @@ func _run() -> void:
 	_assert(pressure_state.reward_choices.has("storage_chamber"), "Capacity pressure injects storage into reward choices")
 	pressure_state.queue_free()
 
+	var reward_probe = GameStateScript.new()
+	root.add_child(reward_probe)
+	reward_probe.reset_game()
+	var fixed_near_debris := ["straight_corridor", "fungus_farm", "storage_chamber"]
+	var capacity_rewards := _reward_set_for_pressure(reward_probe, "near_debris", "capacity_pressure")
+	var worker_rewards := _reward_set_for_pressure(reward_probe, "near_debris", "worker_pressure")
+	var soil_rewards := _reward_set_for_pressure(reward_probe, "near_debris", "soil_pressure")
+	_assert(capacity_rewards.has("storage_chamber"), "Capacity pressure can still offer storage")
+	_assert(not _same_card_set(capacity_rewards, fixed_near_debris), "A fixed pool card appearing is not enough to prove pressure-shaped rewards")
+	_assert(worker_rewards.has("nursery"), "Worker pressure changes same-stage rewards toward worker capacity")
+	_assert(soil_rewards.has("digging_room"), "Soil pressure changes same-stage rewards toward soil production")
+	_assert(_set_key(capacity_rewards) != _set_key(worker_rewards), "Same stage has different reward set under capacity vs worker pressure")
+	_assert(_set_key(worker_rewards) != _set_key(soil_rewards), "Same stage has different reward set under worker vs soil pressure")
+	reward_probe.queue_free()
+
+	var visible_impact_state = GameStateScript.new()
+	root.add_child(visible_impact_state)
+	visible_impact_state.reset_game()
+	_build_exploration_ready_state_without_nursery(visible_impact_state)
+	_assert(visible_impact_state.start_external_stage("near_debris")["ok"], "Visible impact setup starts exploration")
+	visible_impact_state.simulate_tick(1.0)
+	var impacted_fungus_index := _module_index(visible_impact_state, "fungus_farm")
+	_assert(impacted_fungus_index >= 0, "Visible impact setup has fungus farm")
+	if impacted_fungus_index >= 0:
+		var impacted_fungus: Dictionary = visible_impact_state.modules[impacted_fungus_index]
+		_assert(float(impacted_fungus["efficiency"]) < 1.0, "Exploration visibly lowers production module efficiency")
+		_assert(String(impacted_fungus["last_blocker"]) == "no_workers", "Exploration exposes no_workers blocker on production module")
+	var impact_summary: Dictionary = visible_impact_state.production_impact_summary()
+	_assert(float(impact_summary["worker_satisfaction"]) < 1.0, "Production impact summary exposes global worker satisfaction")
+	_assert(int(impact_summary["constrained_count"]) > 0, "Production impact summary exposes constrained production count")
+	visible_impact_state.queue_free()
+
 	# Invariant: digging progress unlocks frontier cells over time, not on placement.
 	var dig_state = GameStateScript.new()
 	root.add_child(dig_state)
@@ -312,6 +344,55 @@ func _build_exploration_ready_state(state) -> void:
 	_grant_build_resources(state)
 	_assert(state.request_place_module("surface_entrance", Vector2i(6, 4), 0)["ok"], "Explore setup places entrance")
 	_grant_build_resources(state)
+
+func _build_exploration_ready_state_without_nursery(state) -> void:
+	_grant_build_resources(state)
+	_assert(state.request_place_module("straight_corridor", Vector2i(4, 2), 0)["ok"], "Impact setup places corridor")
+	_grant_build_resources(state)
+	_assert(state.request_place_module("digging_room", Vector2i(4, 1), 0)["ok"], "Impact setup places digging room")
+	_grant_build_resources(state)
+	_assert(state.request_place_module("fungus_farm", Vector2i(2, 3), 0)["ok"], "Impact setup places fungus farm")
+	_grant_build_resources(state)
+	_assert(state.request_place_module("surface_entrance", Vector2i(6, 4), 0)["ok"], "Impact setup places entrance")
+	_grant_build_resources(state)
+
+func _reward_set_for_pressure(state, stage_id: String, pressure_key: String) -> Array[String]:
+	state.city_pressure = _pressure_dict(pressure_key)
+	state.active_external_run = {"id": stage_id}
+	state.reward_choices.clear()
+	state.reward_choice_context.clear()
+	state.draw_count = 0
+	state._generate_reward_choices(state.external_stages[stage_id], "success")
+	var result: Array[String] = []
+	for card_id in state.reward_choices:
+		result.append(String(card_id))
+	state.active_external_run.clear()
+	return result
+
+func _pressure_dict(active_key: String) -> Dictionary:
+	return {
+		"food_pressure": 0.0 if active_key != "food_pressure" else 1.0,
+		"soil_pressure": 0.0 if active_key != "soil_pressure" else 1.0,
+		"worker_pressure": 0.0 if active_key != "worker_pressure" else 1.0,
+		"capacity_pressure": 0.0 if active_key != "capacity_pressure" else 1.0,
+		"throughput_pressure": 0.0 if active_key != "throughput_pressure" else 1.0,
+		"expansion_pressure": 0.0 if active_key != "expansion_pressure" else 1.0,
+	}
+
+func _same_card_set(left: Array, right: Array) -> bool:
+	if left.size() != right.size():
+		return false
+	for card_id in left:
+		if not right.has(card_id):
+			return false
+	return true
+
+func _set_key(cards: Array) -> String:
+	var copy: Array[String] = []
+	for card_id in cards:
+		copy.append(String(card_id))
+	copy.sort()
+	return "|".join(copy)
 
 func _grant_build_resources(state) -> void:
 	state.resources["food"] = state.capacities["food"]
