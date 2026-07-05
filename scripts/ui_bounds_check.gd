@@ -22,7 +22,10 @@ func _run() -> void:
 	await _settle_frames(3)
 
 	_assert_control_inside(main.get_node("UILayer/StartOverlay/StartPanel"), "start panel")
+	_assert_label_text(main.get_node("UILayer/StartOverlay/StartPanel/VBox/Title"), "Ant Nest City", "start title")
+	_assert_label_text(main.get_node("UILayer/StartOverlay/StartPanel/VBox/Subtitle"), "underground nest", "start subtitle")
 	_assert_control_inside(main.get_node("UILayer/StartOverlay/StartPanel/VBox/StartButton"), "start button")
+	_assert_button_text(main.get_node("UILayer/StartOverlay/StartPanel/VBox/StartButton"), "Start New Nest", "start button text")
 	main.get_node("UILayer/StartOverlay/StartPanel/VBox/StartButton").pressed.emit()
 	await _settle_frames(2)
 
@@ -30,16 +33,20 @@ func _run() -> void:
 	_place_opening_for_ui(main, state)
 	await _settle_frames(2)
 	_assert_control_inside(main.get_node("UILayer/TopResourceBar"), "top resource goal text")
+	_assert_label_text(main.get_node("UILayer/TopResourceBar"), "Small jobs:", "stockpile goal copy")
+	_assert_label_text(main.get_node("UILayer/TopResourceBar"), "Food, Soil, or Tunnel", "work-order help copy")
 	_assert_control_inside(main.get_node("UILayer/BottomHandTray"), "bottom hand tray")
 	_assert_control_inside(main.get_node("UILayer/FeedbackQueue"), "feedback queue")
 	_assert_control_inside(main.get_node("UILayer/StockpileChoiceBar"), "stockpile choice bar")
-	for button_path in [
-		"UILayer/StockpileChoiceBar/FoodCrewButton",
-		"UILayer/StockpileChoiceBar/SoilCrewButton",
-		"UILayer/StockpileChoiceBar/TunnelCrewButton",
-		"UILayer/StockpileChoiceBar/BalancedCrewButton",
-	]:
+	var work_buttons := {
+		"UILayer/StockpileChoiceBar/FoodCrewButton": "Food",
+		"UILayer/StockpileChoiceBar/SoilCrewButton": "Soil",
+		"UILayer/StockpileChoiceBar/TunnelCrewButton": "Tunnel",
+		"UILayer/StockpileChoiceBar/BalancedCrewButton": "Balance",
+	}
+	for button_path in work_buttons.keys():
 		_assert_control_inside(main.get_node(button_path), button_path.get_file())
+		_assert_button_text(main.get_node(button_path), String(work_buttons[button_path]), button_path.get_file())
 	for card in main.get_node("UILayer/BottomHandTray").get_children():
 		if card is Control and card.visible:
 			_assert_rect_inside((card as Control).get_global_rect(), "visible hand card")
@@ -61,10 +68,13 @@ func _run() -> void:
 		var first_stage = stage_box.get_child(0)
 		if first_stage is Control:
 			_assert_control_inside(first_stage, "first entrance stage entry")
+			_assert_text_in_visible_labels(first_stage, "What helps:", "first stage What helps copy")
+			_assert_text_in_visible_labels(first_stage, "Likely finds:", "first stage Likely finds copy")
 		var explore_button = _first_button(first_stage)
 		_assert(explore_button != null, "first entrance stage has Explore button")
 		if explore_button != null:
 			_assert_control_inside(explore_button, "first Explore button")
+			_assert_button_text(explore_button, "Explore", "first Explore button text")
 
 	state.reward_choices.clear()
 	for reward_card_id in ["storage_chamber", "nursery", "sorter"]:
@@ -73,15 +83,18 @@ func _run() -> void:
 	await _settle_frames(3)
 	var reward_choice = main.get_node("UILayer/RewardChoice")
 	_assert_control_inside(reward_choice, "reward choice modal")
+	_assert_text_in_visible_labels(reward_choice, "Choose one module", "reward title copy")
 	if reward_choice.cards_box != null:
 		_assert_control_inside(reward_choice.cards_box, "reward card row")
 		for reward_card in reward_choice.cards_box.get_children():
 			if reward_card is Control:
 				_assert_control_inside(reward_card, "reward card")
+				_assert_text_in_visible_labels(reward_card, "Cost:", "reward card cost copy")
 			var choose_button = _first_button(reward_card)
 			_assert(choose_button != null, "reward card has Choose button")
 			if choose_button != null:
 				_assert_control_inside(choose_button, "reward Choose button")
+				_assert_button_text(choose_button, "Choose", "reward Choose button text")
 
 	if failures.is_empty():
 		print("UI bounds check passed: 1280x720 start, work-order, entrance, and reward controls are visible inside the viewport.")
@@ -144,6 +157,27 @@ func _first_button(node: Node) -> Button:
 		if found != null:
 			return found
 	return null
+
+func _assert_label_text(label: Label, expected: String, label_name: String) -> void:
+	_assert_control_inside(label, label_name)
+	_assert(label.text.contains(expected), "%s contains '%s'" % [label_name, expected])
+
+func _assert_button_text(button: Button, expected: String, label_name: String) -> void:
+	_assert_control_inside(button, label_name)
+	_assert(button.text.contains(expected), "%s contains '%s'" % [label_name, expected])
+
+func _assert_text_in_visible_labels(node: Node, expected: String, label_name: String) -> void:
+	var matches: Array[Label] = []
+	_collect_matching_labels(node, expected, matches)
+	_assert(not matches.is_empty(), "%s exists" % label_name)
+	for label in matches:
+		_assert_control_inside(label, label_name)
+
+func _collect_matching_labels(node: Node, expected: String, matches: Array[Label]) -> void:
+	if node is Label and (node as Label).text.contains(expected):
+		matches.append(node)
+	for child in node.get_children():
+		_collect_matching_labels(child, expected, matches)
 
 func _assert(condition: bool, message: String) -> void:
 	if not condition:

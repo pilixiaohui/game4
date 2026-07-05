@@ -313,7 +313,7 @@ func _run() -> void:
 	_assert(int(impact_summary["constrained_count"]) > 0, "Production impact summary exposes constrained production count")
 	visible_impact_state.queue_free()
 
-	# Invariant: support rewards create measurable 3-5 minute consequences when installed.
+	# Rule consequence tests: fixture-built support rewards create measurable 3-5 minute consequences when installed.
 	var storage_effect_state = GameStateScript.new()
 	root.add_child(storage_effect_state)
 	storage_effect_state.reset_game()

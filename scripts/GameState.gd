@@ -16,6 +16,7 @@ const ExternalStageDataScript := preload("res://scripts/data/ExternalStageData.g
 const StableRulesScript := preload("res://scripts/StableRules.gd")
 const RewardGeneratorScript := preload("res://scripts/RewardGenerator.gd")
 const GoalAdvisorScript := preload("res://scripts/GoalAdvisor.gd")
+const WorkOrderRulesScript := preload("res://scripts/WorkOrderRules.gd")
 
 const GRID_SIZE := Vector2i(10, 8)
 const CORE_ORIGIN := Vector2i(4, 3)
@@ -264,7 +265,7 @@ func request_place_module(card_id: String, origin: Vector2i, rotation_steps: int
 	return {"ok": true, "reason": "OK", "module": module}
 
 func set_work_order(order_id: String) -> Dictionary:
-	if not ["balanced", "food_crew", "soil_crew", "tunnel_crew"].has(order_id):
+	if not WorkOrderRulesScript.is_valid(order_id):
 		return {"ok": false, "reason": "Unknown work order"}
 	work_order = order_id
 	_recalculate_city_stats()
@@ -273,14 +274,7 @@ func set_work_order(order_id: String) -> Dictionary:
 	return {"ok": true, "work_order": work_order}
 
 func work_order_label() -> String:
-	match work_order:
-		"food_crew":
-			return "Feed fungus first"
-		"soil_crew":
-			return "Dig soil first"
-		"tunnel_crew":
-			return "Clear tunnel loads"
-	return "Balanced crews"
+	return WorkOrderRulesScript.label(work_order)
 
 func simulate_tick(delta: float) -> void:
 	elapsed_seconds += delta
@@ -449,24 +443,10 @@ func _route_support_for_path(path: Array[int]) -> int:
 	return support
 
 func _work_order_transport_bonus() -> int:
-	return 1 if work_order == "tunnel_crew" else 0
+	return WorkOrderRulesScript.transport_bonus(work_order)
 
 func _work_order_efficiency_for_module(data) -> float:
-	match work_order:
-		"food_crew":
-			if data.output_rates.has("food"):
-				return 1.2
-			if data.output_rates.has("soil"):
-				return 0.9
-		"soil_crew":
-			if data.output_rates.has("soil"):
-				return 1.2
-			if data.output_rates.has("food"):
-				return 0.9
-		"tunnel_crew":
-			if not data.output_rates.is_empty():
-				return 0.95
-	return 1.0
+	return WorkOrderRulesScript.production_multiplier(work_order, data.output_rates)
 
 func _transport_pending_outputs(delta: float) -> void:
 	var route_keys := transport_routes.keys()
@@ -768,6 +748,7 @@ func _finish_external_run() -> void:
 	active_external_run["resource_waste"] = {"food": food_gain - food_accepted, "soil": soil_gain - soil_accepted}
 	external_run_finished.emit(active_external_run.duplicate(true))
 	last_external_result = active_external_run.duplicate(true)
+	_recalculate_city_stats()
 	if result in ["success", "partial"]:
 		_generate_reward_choices(stage, result)
 		reward_choice_ready.emit(reward_choices.duplicate())
