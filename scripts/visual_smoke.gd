@@ -8,6 +8,10 @@ func _init() -> void:
 	call_deferred("_run")
 
 func _run() -> void:
+	if DisplayServer.get_name() == "headless":
+		push_error("Visual smoke requires a display server. Use xvfb-run -a ./bin/godot --path . --script res://scripts/visual_smoke.gd. Pure --headless is reserved for validate/natural scripts.")
+		quit(1)
+		return
 	var dir := DirAccess.open("user://")
 	if dir != null:
 		dir.make_dir_recursive("visual_smoke")
@@ -69,7 +73,7 @@ func _run() -> void:
 	await _capture("07_reward_modal.png")
 
 	if failures.is_empty():
-		print("Visual smoke passed. Uses supplied resources and seeded success for UI coverage only. Screenshots: %s" % ProjectSettings.globalize_path(SCREENSHOT_DIR))
+		print("Visual smoke passed under a display server. Stable CI/local gate: xvfb-run -a ./bin/godot --path . --script res://scripts/visual_smoke.gd. Screenshots: %s" % ProjectSettings.globalize_path(SCREENSHOT_DIR))
 		quit(0)
 	else:
 		for failure in failures:

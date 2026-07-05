@@ -13,3 +13,25 @@ explicit sources:
 The wrapper intentionally does not contain daemon- or workspace-specific
 absolute fallbacks. Runtime environments that provide a cached binary should
 expose it through `GODOT_BIN`.
+
+## Recommended validation commands
+
+Pure headless is the stable gate for logic, catalog, and natural simulation
+checks:
+
+```sh
+GODOT_BIN=/path/to/Godot_v4.7-stable_linux.x86_64 ./bin/godot --headless --path . --script res://scripts/validate_headless.gd
+GODOT_BIN=/path/to/Godot_v4.7-stable_linux.x86_64 ./bin/godot --headless --path . --script res://scripts/natural_playthrough.gd
+GODOT_BIN=/path/to/Godot_v4.7-stable_linux.x86_64 ./bin/godot --headless --path . --script res://scripts/natural_support_matrix.gd
+```
+
+Visual and layout gates require a display server. In CI or a local terminal
+without a desktop session, run them through `xvfb-run`:
+
+```sh
+GODOT_BIN=/path/to/Godot_v4.7-stable_linux.x86_64 xvfb-run -a ./bin/godot --path . --script res://scripts/visual_smoke.gd
+GODOT_BIN=/path/to/Godot_v4.7-stable_linux.x86_64 xvfb-run -a ./bin/godot --path . --script res://scripts/ui_bounds_check.gd
+```
+
+Do not use pure `--headless` visual smoke as a stable gate; it is intentionally
+limited to validate/natural scripts.
