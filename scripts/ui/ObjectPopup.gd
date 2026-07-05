@@ -10,7 +10,7 @@ var stage_box: VBoxContainer
 
 func _ready() -> void:
 	visible = false
-	custom_minimum_size = Vector2(360, 240)
+	custom_minimum_size = Vector2(390, 240)
 	var root = VBoxContainer.new()
 	add_child(root)
 	title_label = Label.new()
@@ -64,7 +64,7 @@ func show_module(state: Dictionary, data, stages: Dictionary = {}, active_run: D
 				entry.add_theme_constant_override("separation", 4)
 				var summary = Label.new()
 				summary.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-				summary.text = "%s\n%s, %d workers, %d food\nOutlook: %s   Risk: %s\nWhat helps: %s\nLikely finds: %s" % [
+				summary.text = "%s\n%s, %d workers, %d food\nOutlook: %s   Risk: %s\nHelps: %s\nFinds: %s" % [
 					stage.display_name,
 					_duration_text(float(stage.duration)),
 					stage.worker_required,

@@ -18,7 +18,6 @@ var connectors: Dictionary = {}
 var tags: Array[String] = []
 var reward_weights: Dictionary = {}
 var pressure_weight_bonus: Dictionary = {}
-var guaranteed_slots: Array[String] = []
 
 static func make(
 	p_id: String,
@@ -36,8 +35,7 @@ static func make(
 	p_reward_weights: Dictionary = {},
 	p_pressure_weight_bonus: Dictionary = {},
 	p_partial_resource_ratio: float = 0.55,
-	p_failure_resource_ratio: float = 0.3,
-	p_guaranteed_slots: Array = []
+	p_failure_resource_ratio: float = 0.3
 ):
 	var data = load("res://scripts/data/ExternalStageData.gd").new()
 	data.id = p_id
@@ -60,7 +58,4 @@ static func make(
 	data.pressure_weight_bonus = p_pressure_weight_bonus.duplicate(true)
 	data.partial_resource_ratio = clampf(p_partial_resource_ratio, 0.0, 1.0)
 	data.failure_resource_ratio = clampf(p_failure_resource_ratio, 0.0, 1.0)
-	data.guaranteed_slots.clear()
-	for slot in p_guaranteed_slots:
-		data.guaranteed_slots.append(String(slot))
 	return data

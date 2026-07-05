@@ -15,8 +15,7 @@
     "reward_weights": {"food": 3, "throughput": 1, "storage": 1},
     "pressure_weight_bonus": {"food_pressure": 4, "soil_pressure": 2, "worker_pressure": 3, "capacity_pressure": 3, "throughput_pressure": 2},
     "partial_resource_ratio": 0.55,
-    "failure_resource_ratio": 0.25,
-    "guaranteed_slots": ["problem_solver", "stage_theme", "wildcard"]
+    "failure_resource_ratio": 0.25
   },
   {
     "id": "loose_soil",
@@ -34,8 +33,7 @@
     "reward_weights": {"soil": 3, "expansion": 2, "storage": 1},
     "pressure_weight_bonus": {"soil_pressure": 4, "worker_pressure": 2, "expansion_pressure": 3, "capacity_pressure": 2, "throughput_pressure": 2},
     "partial_resource_ratio": 0.5,
-    "failure_resource_ratio": 0.25,
-    "guaranteed_slots": ["problem_solver", "stage_theme", "wildcard"]
+    "failure_resource_ratio": 0.25
   },
   {
     "id": "old_root",
@@ -53,7 +51,6 @@
     "reward_weights": {"workers": 3, "throughput": 3, "risk": 1},
     "pressure_weight_bonus": {"worker_pressure": 4, "throughput_pressure": 4, "food_pressure": 1, "soil_pressure": 2, "capacity_pressure": 2},
     "partial_resource_ratio": 0.45,
-    "failure_resource_ratio": 0.2,
-    "guaranteed_slots": ["problem_solver", "stage_theme", "wildcard"]
+    "failure_resource_ratio": 0.2
   }
 ]

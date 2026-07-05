@@ -13,6 +13,9 @@ signal feedback(message: String)
 
 const ModuleDataScript := preload("res://scripts/data/ModuleData.gd")
 const ExternalStageDataScript := preload("res://scripts/data/ExternalStageData.gd")
+const StableRulesScript := preload("res://scripts/StableRules.gd")
+const RewardGeneratorScript := preload("res://scripts/RewardGenerator.gd")
+const GoalAdvisorScript := preload("res://scripts/GoalAdvisor.gd")
 
 const GRID_SIZE := Vector2i(10, 8)
 const CORE_ORIGIN := Vector2i(4, 3)
@@ -160,8 +163,7 @@ func _load_external_stage(row: Dictionary) -> void:
 		Dictionary(row.get("reward_weights", {})),
 		Dictionary(row.get("pressure_weight_bonus", {})),
 		float(row.get("partial_resource_ratio", 0.55)),
-		float(row.get("failure_resource_ratio", 0.3)),
-		Array(row.get("guaranteed_slots", ["problem_solver", "stage_theme", "wildcard"]))
+		float(row.get("failure_resource_ratio", 0.3))
 	)
 
 func _connectors_from_row(value, context: String) -> Dictionary:
@@ -529,7 +531,7 @@ func start_external_stage(stage_id: String) -> Dictionary:
 		"modifiers": preview["modifiers"],
 		"city_pressure_snapshot": city_pressure.duplicate(true),
 		"seed": run_seed,
-		"result_roll": _deterministic_roll(run_seed),
+		"result_roll": StableRulesScript.stable_roll(run_seed),
 	}
 	_recalculate_city_stats()
 	external_run_started.emit(active_external_run.duplicate(true))
@@ -537,22 +539,28 @@ func start_external_stage(stage_id: String) -> Dictionary:
 	return {"ok": true, "run": active_external_run.duplicate(true)}
 
 func external_stage_preview(stage_id: String) -> Dictionary:
+	return external_stage_preview_for_snapshot(stage_id, _preview_snapshot())
+
+func external_stage_preview_for_snapshot(stage_id: String, snapshot: Dictionary) -> Dictionary:
 	if not external_stages.has(stage_id):
 		return {}
 	var stage = external_stages[stage_id]
-	_recalculate_city_stats()
+	var snapshot_workers: Dictionary = snapshot.get("workers", {})
+	var snapshot_resources: Dictionary = snapshot.get("resources", {})
+	var snapshot_capacities: Dictionary = snapshot.get("capacities", {})
+	var snapshot_pressure: Dictionary = snapshot.get("city_pressure", {})
 	var free_worker_ratio := 1.0
-	if int(workers["total"]) > 0:
-		free_worker_ratio = float(max(0, int(workers["free"]))) / float(max(1, int(workers["total"])))
+	if int(snapshot_workers.get("total", 0)) > 0:
+		free_worker_ratio = float(max(0, int(snapshot_workers.get("free", 0)))) / float(max(1, int(snapshot_workers.get("total", 1))))
 	var free_worker_bonus := (free_worker_ratio - 0.35) * 0.18
 	var capacity_room := 0.0
 	for resource_name in ["food", "soil"]:
-		capacity_room += float(max(0, int(capacities[resource_name]) - int(resources[resource_name]))) / float(max(1, int(capacities[resource_name])))
+		capacity_room += float(max(0, int(snapshot_capacities.get(resource_name, 0)) - int(snapshot_resources.get(resource_name, 0)))) / float(max(1, int(snapshot_capacities.get(resource_name, 1))))
 	var capacity_bonus := clampf((capacity_room / 2.0 - 0.25) * 0.12, -0.06, 0.08)
 	var instability_penalty := 0.0
 	for key in ["worker_pressure", "capacity_pressure", "throughput_pressure"]:
-		instability_penalty += float(city_pressure.get(key, 0.0)) * 0.04
-	var entrance_bonus := 0.04 if has_external_entrance() else 0.0
+		instability_penalty += float(snapshot_pressure.get(key, 0.0)) * 0.04
+	var entrance_bonus := 0.04 if bool(snapshot.get("has_external_entrance", false)) else 0.0
 	var chance := clampf(stage.success_base - stage.risk * 0.35 + free_worker_bonus + capacity_bonus + entrance_bonus - instability_penalty, 0.1, 0.9)
 	return {
 		"success_chance": chance,
@@ -567,8 +575,9 @@ func external_stage_preview(stage_id: String) -> Dictionary:
 
 func external_stage_previews() -> Dictionary:
 	var previews := {}
+	var snapshot := _preview_snapshot()
 	for stage_id in external_stages.keys():
-		previews[stage_id] = external_stage_preview(stage_id)
+		previews[stage_id] = external_stage_preview_for_snapshot(stage_id, snapshot)
 	return previews
 
 func production_impact_summary() -> Dictionary:
@@ -601,111 +610,7 @@ func production_impact_summary() -> Dictionary:
 	}
 
 func nest_goal_summary() -> Dictionary:
-	var milestone := _first_session_milestone()
-	if not milestone.is_empty():
-		return milestone
-	var key := _highest_pressure_key()
-	var value := float(city_pressure.get(key, 0.0))
-	var label := "Keep the nest flowing"
-	var action := "Add production, storage, workers, tunnels, or explore when ready."
-	match key:
-		"food_pressure":
-			label = "Food stores are thin"
-			action = "Grow food or scout debris before starting a costly build."
-		"soil_pressure":
-			label = "Soil limits expansion"
-			action = "Run digging rooms or scout loose soil for the next chamber."
-		"worker_pressure":
-			label = "Workers are stretched"
-			action = "Choose Nursery or delay exploration until production recovers."
-		"capacity_pressure":
-			label = "Stores are near full"
-			action = "Build Storage before producers waste output."
-		"throughput_pressure":
-			label = "Tunnels are jammed"
-			action = "Add Sorter or corridors near busy production routes."
-		"expansion_pressure":
-			label = "The nest needs room"
-			action = "Let digging rooms open frontier cells before placing large modules."
-	if value <= 0.05:
-		label = "Nest is stable"
-		action = "Prepare an entrance run or shape the next production wing."
-	return {
-		"key": key,
-		"value": value,
-		"label": label,
-		"action": action,
-		"time": elapsed_seconds,
-	}
-
-func _first_session_milestone() -> Dictionary:
-	if reward_choices.size() > 0:
-		return {
-			"key": "reward_pending",
-			"value": 1.0,
-			"label": "Pick the next nest organ",
-			"action": "Choose the card that answers the strongest pressure, then keep playing to feel the tradeoff.",
-			"time": elapsed_seconds,
-		}
-	if active_external_run.has("id"):
-		return {
-			"key": "exploration_running",
-			"value": 1.0,
-			"label": "Foragers are outside",
-			"action": "Watch production slow while workers are away; recover when they return.",
-			"time": elapsed_seconds,
-		}
-	if not _has_module_id("digging_room"):
-		return {
-			"key": "build_soil",
-			"value": 0.8,
-			"label": "Start a soil line",
-			"action": "Place a corridor above the queen, then attach a Digging Room to open future cells.",
-			"time": elapsed_seconds,
-		}
-	if not _has_module_id("fungus_farm"):
-		return {
-			"key": "build_food",
-			"value": 0.8,
-			"label": "Start a food line",
-			"action": "Place a Fungus Farm on the west side so the entrance has a food budget.",
-			"time": elapsed_seconds,
-		}
-	if not _has_module_id("surface_entrance"):
-		var entrance = module_defs.get("surface_entrance", null)
-		if entrance != null:
-			return {
-				"key": "stockpile_entrance",
-				"value": 0.75,
-				"label": "Stockpile for the surface gate",
-				"action": "Need %d food and %d soil; production and tunnel load decide how soon scouting starts." % [entrance.build_cost_food, entrance.build_cost_soil],
-				"time": elapsed_seconds,
-			}
-	if last_external_result.is_empty():
-		return {
-			"key": "start_exploration",
-			"value": 0.65,
-			"label": "Choose the first scouting route",
-			"action": "Compare outlook, risk, worker draw, and likely finds before sending workers out.",
-			"time": elapsed_seconds,
-		}
-	for support_id in ["storage_chamber", "nursery", "sorter"]:
-		if hand.has(support_id) and not _has_module_id(support_id):
-			var data = module_defs[support_id]
-			return {
-				"key": "install_reward",
-				"value": 0.7,
-				"label": "Install %s" % data.display_name,
-				"action": "%s Watch the pressure meter for the next 3-5 minutes after it connects." % data.description_short,
-				"time": elapsed_seconds,
-			}
-	return {}
-
-func _has_module_id(module_id: String) -> bool:
-	for module in modules:
-		if String(module.get("module_id", "")) == module_id:
-			return true
-	return false
+	return GoalAdvisorScript.summary(_goal_snapshot())
 
 func choose_reward(index: int) -> Dictionary:
 	if index < 0 or index >= reward_choices.size():
@@ -826,168 +731,18 @@ func _finish_external_run() -> void:
 func _reward_amount(stage_id: String, resource_name: String, reward_range: Vector2i, ratio: float) -> int:
 	if reward_range.x <= 0 and reward_range.y <= 0:
 		return 0
-	var roll := _deterministic_roll("%s:%s:%d" % [stage_id, resource_name, draw_count])
+	var roll := StableRulesScript.stable_roll("%s:%s:%d" % [stage_id, resource_name, draw_count])
 	var base := reward_range.x + int(round(float(max(0, reward_range.y - reward_range.x)) * roll))
 	return int(round(float(base) * ratio))
 
 func _generate_reward_choices(stage, result: String) -> void:
+	var generated: Dictionary = RewardGeneratorScript.generate(stage, result, module_defs, city_pressure, draw_count)
 	reward_choices.clear()
 	reward_choice_context.clear()
-	var pressure_key := _highest_pressure_key()
-	var pool := _expanded_reward_pool(stage, pressure_key)
-	_add_best_reward_for_pressure(pool, pressure_key)
-	_add_best_reward_for_tags(pool, stage.tags, "Matches the outside site theme")
-	_add_weighted_reward(pool, stage, "%s:%s:%d" % [stage.id, result, draw_count])
-	if result == "partial" and reward_choices.size() > 0:
-		var card_id := reward_choices[0]
-		reward_choice_context[card_id] = "%s after a partial return" % String(reward_choice_context.get(card_id, "Stabilizes the city"))
-	for card_id in pool:
-		if reward_choices.size() >= 3:
-			break
-		if module_defs.has(card_id) and not reward_choices.has(card_id):
-			reward_choices.append(card_id)
-			reward_choice_context[card_id] = "Keeps options open"
-	_break_fixed_reward_set(stage.card_reward_pool, pool, pressure_key)
+	for card_id in generated.get("choices", []):
+		reward_choices.append(String(card_id))
+	reward_choice_context = Dictionary(generated.get("context", {})).duplicate(true)
 	draw_count += 1
-
-func _expanded_reward_pool(stage, pressure_key: String) -> Array[String]:
-	var pool: Array[String] = []
-	for card_id in stage.card_reward_pool:
-		_append_unique_card(pool, String(card_id))
-	for card_id in module_defs.keys():
-		var data = module_defs[card_id]
-		if data.rarity == "starter" or data.category == "core":
-			continue
-		var matches_stage := false
-		for tag in data.reward_tags:
-			if stage.tags.has(tag):
-				matches_stage = true
-		for tag in data.tags:
-			if stage.tags.has(tag):
-				matches_stage = true
-		if matches_stage:
-			_append_unique_card(pool, String(card_id))
-	for card_id in module_defs.keys():
-		var data = module_defs[card_id]
-		if data.rarity == "starter" or data.category == "core":
-			continue
-		if data.solves_pressure.has(pressure_key):
-			_append_unique_card(pool, String(card_id))
-			continue
-		for tag in data.reward_tags:
-			if _tag_matches_pressure(String(tag), pressure_key):
-				_append_unique_card(pool, String(card_id))
-	return pool
-
-func _append_unique_card(pool: Array[String], card_id: String) -> void:
-	if module_defs.has(card_id) and not pool.has(card_id):
-		pool.append(card_id)
-
-func _break_fixed_reward_set(base_pool: Array[String], expanded_pool: Array[String], pressure_key: String) -> void:
-	var base_trio: Array[String] = []
-	for card_id in base_pool:
-		if base_trio.size() >= 3:
-			break
-		base_trio.append(String(card_id))
-	if reward_choices.size() != 3 or not _same_card_set(reward_choices, base_trio):
-		return
-	var replacement := _best_non_base_reward(base_trio, expanded_pool, pressure_key)
-	if replacement == "":
-		return
-	var removed := String(reward_choices.pop_back())
-	reward_choice_context.erase(removed)
-	reward_choices.append(replacement)
-	reward_choice_context[replacement] = "%s; changes this site's usual choices" % _pressure_reason(pressure_key)
-
-func _same_card_set(left: Array[String], right: Array[String]) -> bool:
-	if left.size() != right.size():
-		return false
-	for card_id in left:
-		if not right.has(card_id):
-			return false
-	return true
-
-func _best_non_base_reward(base_trio: Array[String], expanded_pool: Array[String], pressure_key: String) -> String:
-	var best_id := ""
-	var best_score := -9999.0
-	for card_id in expanded_pool:
-		if base_trio.has(card_id) or reward_choices.has(card_id):
-			continue
-		var data = module_defs[card_id]
-		var score := float(data.solves_pressure.get(pressure_key, 0)) * 3.0
-		for tag in data.reward_tags:
-			if _tag_matches_pressure(String(tag), pressure_key):
-				score += 1.0
-		if score > best_score:
-			best_score = score
-			best_id = card_id
-	return best_id
-
-func _add_best_reward_for_pressure(pool: Array[String], pressure_key: String) -> void:
-	var best_id := ""
-	var best_score := -9999.0
-	for card_id in pool:
-		if not module_defs.has(card_id) or reward_choices.has(card_id):
-			continue
-		var data = module_defs[card_id]
-		var score := float(data.solves_pressure.get(pressure_key, 0)) * 3.0
-		for tag in data.reward_tags:
-			if _tag_matches_pressure(String(tag), pressure_key):
-				score += 1.0
-		if score > best_score:
-			best_score = score
-			best_id = card_id
-	if best_id != "":
-		reward_choices.append(best_id)
-		reward_choice_context[best_id] = _pressure_reason(pressure_key)
-
-func _add_best_reward_for_tags(pool: Array[String], tags: Array[String], reason: String) -> void:
-	var best_id := ""
-	var best_score := -9999.0
-	for card_id in pool:
-		if not module_defs.has(card_id) or reward_choices.has(card_id):
-			continue
-		var data = module_defs[card_id]
-		var score := 0.0
-		for tag in data.reward_tags:
-			if tags.has(tag):
-				score += 2.0
-		for tag in data.tags:
-			if tags.has(tag):
-				score += 1.0
-		if score > best_score:
-			best_score = score
-			best_id = card_id
-	if best_id != "":
-		reward_choices.append(best_id)
-		reward_choice_context[best_id] = reason
-
-func _add_weighted_reward(pool: Array[String], stage_data, seed: String) -> void:
-	var weighted: Array[Dictionary] = []
-	var total := 0.0
-	var pressure_key := _highest_pressure_key()
-	for card_id in pool:
-		if not module_defs.has(card_id) or reward_choices.has(card_id):
-			continue
-		var data = module_defs[card_id]
-		var weight := 1.0
-		for tag in data.reward_tags:
-			weight += float(stage_data.reward_weights.get(tag, 0.0))
-		for pressure in city_pressure.keys():
-			if data.solves_pressure.has(pressure):
-				weight += float(city_pressure[pressure]) * float(stage_data.pressure_weight_bonus.get(pressure, 0.0))
-		weight += float(data.solves_pressure.get(pressure_key, 0)) * 2.0
-		total += weight
-		weighted.append({"id": card_id, "ceiling": total})
-	if weighted.is_empty():
-		return
-	var roll := _deterministic_roll(seed) * total
-	for item in weighted:
-		if roll <= float(item["ceiling"]):
-			var card_id := String(item["id"])
-			reward_choices.append(card_id)
-			reward_choice_context[card_id] = "Weighted by current nest pressure"
-			return
 
 func _new_module_state(card_id: String, origin: Vector2i, rotation_steps: int) -> Dictionary:
 	return {
@@ -1181,44 +936,13 @@ func _overflow_tick_total() -> int:
 	return total
 
 func _highest_pressure_key() -> String:
-	var best_key := "food_pressure"
-	var best_value := -1.0
-	for key in city_pressure.keys():
-		var value := float(city_pressure[key])
-		if value > best_value:
-			best_value = value
-			best_key = String(key)
-	return best_key
+	return StableRulesScript.highest_pressure_key(city_pressure)
 
 func _tag_matches_pressure(tag: String, pressure_key: String) -> bool:
-	return (
-		(tag == "food" and pressure_key == "food_pressure")
-		or (tag == "soil" and pressure_key == "soil_pressure")
-		or (tag == "workers" and pressure_key == "worker_pressure")
-		or (tag == "storage" and pressure_key == "capacity_pressure")
-		or (tag == "throughput" and pressure_key == "throughput_pressure")
-		or (tag == "expansion" and pressure_key == "expansion_pressure")
-	)
+	return StableRulesScript.tag_matches_pressure(tag, pressure_key)
 
 func _pressure_reason(pressure_key: String) -> String:
-	match pressure_key:
-		"food_pressure":
-			return "Relieves food pressure"
-		"soil_pressure":
-			return "Relieves soil pressure"
-		"worker_pressure":
-			return "Relieves worker pressure"
-		"capacity_pressure":
-			return "Relieves storage pressure"
-		"throughput_pressure":
-			return "Relieves tunnel bottlenecks"
-		"expansion_pressure":
-			return "Opens more build space"
-	return "Relieves current nest pressure"
-
-func _deterministic_roll(seed_text: String) -> float:
-	var value: int = abs(hash(seed_text))
-	return float(value % 1000) / 999.0
+	return StableRulesScript.pressure_reason(pressure_key)
 
 func _refresh_frontier() -> void:
 	frontier_cells.clear()
@@ -1238,6 +962,30 @@ func _excavate_around(origin: Vector2i, size: Vector2i, radius: int) -> void:
 		for y in range(origin.y - radius, origin.y + size.y + radius):
 			if x >= 0 and y >= 0 and x < GRID_SIZE.x and y < GRID_SIZE.y:
 				excavated[_cell_key(Vector2i(x, y))] = true
+
+func _preview_snapshot() -> Dictionary:
+	return {
+		"resources": resources.duplicate(true),
+		"capacities": capacities.duplicate(true),
+		"workers": workers.duplicate(true),
+		"city_pressure": city_pressure.duplicate(true),
+		"has_external_entrance": has_external_entrance(),
+	}
+
+func _goal_snapshot() -> Dictionary:
+	return {
+		"resources": resources.duplicate(true),
+		"capacities": capacities.duplicate(true),
+		"workers": workers.duplicate(true),
+		"hand": hand.duplicate(),
+		"modules": modules.duplicate(true),
+		"module_defs": module_defs,
+		"city_pressure": city_pressure.duplicate(true),
+		"reward_choices": reward_choices.duplicate(),
+		"active_external_run": active_external_run.duplicate(true),
+		"last_external_result": last_external_result.duplicate(true),
+		"elapsed_seconds": elapsed_seconds,
+	}
 
 func _emit_state() -> void:
 	resource_changed.emit(resources.duplicate(), capacities.duplicate(), workers.duplicate())

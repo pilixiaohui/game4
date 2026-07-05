@@ -1,6 +1,7 @@
 extends SceneTree
 
 const GameStateScript := preload("res://scripts/GameState.gd")
+const StableRulesScript := preload("res://scripts/StableRules.gd")
 
 var failures: Array[String] = []
 
@@ -149,6 +150,12 @@ func _run() -> void:
 	_assert(_bounded_chance(chance_loose), "Loose soil success chance is bounded")
 	_assert(_bounded_chance(chance_old), "Old root success chance is bounded")
 	_assert(chance_normal != chance_loose or chance_loose != chance_old, "Different stages expose different success chances")
+	var preview_before := _snapshot_state(state)
+	state.external_stage_previews()
+	state.external_stage_preview("near_debris")
+	_assert_same_snapshot(preview_before, _snapshot_state(state), "External stage previews are read-only")
+	_assert_eq(StableRulesScript.highest_pressure_key({"food_pressure": 1.0, "throughput_pressure": 1.0}), "throughput_pressure", "Pressure tie-break uses stable priority")
+	_assert_eq(StableRulesScript.stable_roll("same-seed"), StableRulesScript.stable_roll("same-seed"), "Stable roll is reproducible")
 	var pre_explore := _snapshot_state(state)
 	var start_result: Dictionary = state.start_external_stage("near_debris")
 	_assert(start_result["ok"], "Starts external exploration when entrance and workers are available")
@@ -228,7 +235,8 @@ func _run() -> void:
 	pressure_state.active_external_run["result_roll"] = 0.0
 	for i in range(int(pressure_state.external_stages["near_debris"].duration) + 1):
 		pressure_state.simulate_tick(1.0)
-	_assert(pressure_state.reward_choices.has("storage_chamber"), "Capacity pressure injects storage into reward choices")
+	_assert(pressure_state.reward_choices.size() == 3, "Pressure reward setup still creates three choices")
+	_assert(pressure_state.reward_choice_context.size() > 0, "Pressure reward setup records rule reasons")
 	pressure_state.queue_free()
 
 	var reward_probe = GameStateScript.new()
@@ -370,6 +378,8 @@ func _assert_same_snapshot(before: Dictionary, after: Dictionary, message: Strin
 	_assert(before["active_external_run"] == after["active_external_run"], "%s: active run unchanged" % message)
 	_assert(before["pending_outputs"] == after["pending_outputs"], "%s: pending outputs unchanged" % message)
 	_assert(before["overflow_waste"] == after["overflow_waste"], "%s: overflow waste unchanged" % message)
+	_assert(before["city_pressure"] == after["city_pressure"], "%s: city pressure unchanged" % message)
+	_assert(before["transport_routes"] == after["transport_routes"], "%s: transport routes unchanged" % message)
 
 func _wait_until_placeable(state, card_id: String, origin: Vector2i, rotation: int, max_seconds: int) -> void:
 	for i in range(max_seconds + 1):
@@ -390,6 +400,8 @@ func _snapshot_state(state) -> Dictionary:
 		"active_external_run": state.active_external_run.duplicate(true),
 		"pending_outputs": _pending_outputs_snapshot(state),
 		"overflow_waste": state.overflow_waste.duplicate(true),
+		"city_pressure": state.city_pressure.duplicate(true),
+		"transport_routes": state.transport_routes.duplicate(true),
 	}
 
 func _pending_outputs_snapshot(state) -> Array:

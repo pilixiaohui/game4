@@ -50,10 +50,10 @@ offset_right = 840.0
 offset_bottom = 578.0
 
 [node name="ObjectPopup" type="PanelContainer" parent="UILayer"]
-offset_left = 980.0
+offset_left = 860.0
 offset_top = 96.0
-offset_right = 1240.0
-offset_bottom = 276.0
+offset_right = 1264.0
+offset_bottom = 430.0
 script = ExtResource("4_popup")
 
 [node name="ModalDimmer" type="ColorRect" parent="UILayer"]

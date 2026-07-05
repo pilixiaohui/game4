@@ -1,6 +1,15 @@
 extends SceneTree
 
 const GameStateScript := preload("res://scripts/GameState.gd")
+const StableRulesScript := preload("res://scripts/StableRules.gd")
+
+const SCENARIO := {
+	"name": "first_session_canonical_smoke",
+	"opening_cards": ["straight_corridor", "digging_room", "fungus_farm"],
+	"entrance_card": "surface_entrance",
+	"post_reward_seconds": 240,
+	"max_total_seconds": 900,
+}
 
 var failures: Array[String] = []
 var events: Array[String] = []
@@ -14,12 +23,12 @@ func _run() -> void:
 	state.reset_game()
 	_record(state, "start")
 
-	_place_or_fail(state, "straight_corridor", Vector2i(4, 2), 0, "first tunnel")
-	_place_or_fail(state, "digging_room", Vector2i(4, 1), 0, "soil line")
-	_place_or_fail(state, "fungus_farm", Vector2i(2, 3), 0, "food line")
+	for card_id in SCENARIO["opening_cards"]:
+		_place_card_via_search(state, String(card_id), "opening module")
 
-	_wait_until_placeable(state, "surface_entrance", Vector2i(6, 4), 0, 520.0)
-	_place_or_fail(state, "surface_entrance", Vector2i(6, 4), 0, "surface gate")
+	var entrance_card := String(SCENARIO["entrance_card"])
+	_wait_until_search_placeable(state, entrance_card, 520.0)
+	_place_card_via_search(state, entrance_card, "surface gate")
 	var entrance_time: float = state.elapsed_seconds
 
 	var stage_id := _best_natural_stage(state)
@@ -29,7 +38,7 @@ func _run() -> void:
 
 	while state.active_external_run.has("id") and failures.is_empty():
 		state.simulate_tick(1.0)
-		if state.elapsed_seconds > 850.0:
+		if state.elapsed_seconds > float(SCENARIO["max_total_seconds"]) - float(SCENARIO["post_reward_seconds"]):
 			_fail("Exploration did not resolve inside first-session window")
 			break
 	var reward_time: float = state.elapsed_seconds
@@ -43,12 +52,11 @@ func _run() -> void:
 	_assert(bool(choose_result.get("ok", false)), "Natural path chooses a real reward card")
 	_record(state, "chose %s" % chosen_card)
 
-	var placement := _reward_placement(chosen_card)
-	_wait_until_placeable(state, chosen_card, Vector2i(placement.get("x", 6), placement.get("y", 3)), int(placement.get("r", 0)), 300.0)
+	_wait_until_search_placeable(state, chosen_card, 300.0)
 	var support_before := _support_metric(state, chosen_card)
-	_place_or_fail(state, chosen_card, Vector2i(placement.get("x", 6), placement.get("y", 3)), int(placement.get("r", 0)), "reward module")
+	_place_card_via_search(state, chosen_card, "reward module")
 	var support_time: float = state.elapsed_seconds
-	for i in range(240):
+	for i in range(int(SCENARIO["post_reward_seconds"])):
 		state.simulate_tick(1.0)
 	var support_after := _support_metric(state, chosen_card)
 	var total_time: float = state.elapsed_seconds
@@ -57,7 +65,7 @@ func _run() -> void:
 	_record(state, "continued after reward")
 
 	if failures.is_empty():
-		print("Natural playthrough passed.")
+		print("Canonical natural smoke passed.")
 		print("Evidence: entrance %.0fs, reward %.0fs, installed %s at %.0fs, total %.0fs." % [entrance_time, reward_time, chosen_card, support_time, total_time])
 		print("Pressure before reward: %s" % str(pressure_before))
 		print("Support metric before/after: %s -> %s" % [str(support_before), str(support_after)])
@@ -71,20 +79,78 @@ func _run() -> void:
 			print(event)
 		quit(1)
 
-func _wait_until_placeable(state, card_id: String, origin: Vector2i, rotation: int, timeout: float) -> void:
+func _wait_until_search_placeable(state, card_id: String, timeout: float) -> void:
 	var start_time := float(state.elapsed_seconds)
-	while not bool(state.can_place_module(card_id, origin, rotation).get("ok", false)):
+	while _best_placement(state, card_id).is_empty():
 		state.simulate_tick(1.0)
 		if float(state.elapsed_seconds) - start_time > timeout:
-			_fail("Timed out waiting to place %s: %s" % [card_id, state.can_place_module(card_id, origin, rotation).get("reason", "unknown")])
+			_fail("Timed out waiting to place %s through legal search" % card_id)
 			return
 
-func _place_or_fail(state, card_id: String, origin: Vector2i, rotation: int, label: String) -> void:
+func _place_card_via_search(state, card_id: String, label: String) -> void:
 	if not failures.is_empty():
 		return
-	var result: Dictionary = state.request_place_module(card_id, origin, rotation)
+	var placement := _best_placement(state, card_id)
+	_assert(not placement.is_empty(), "Found legal placement for %s (%s)" % [card_id, label])
+	if placement.is_empty():
+		return
+	var result: Dictionary = state.request_place_module(card_id, placement["origin"], int(placement["rotation"]))
 	_assert(bool(result.get("ok", false)), "Natural path places %s (%s)" % [card_id, label])
-	_record(state, "placed %s" % card_id)
+	_record(state, "placed %s at %s r%d" % [card_id, str(placement["origin"]), int(placement["rotation"])])
+
+func _best_placement(state, card_id: String) -> Dictionary:
+	var best := {}
+	var best_score := -999999.0
+	for x in range(state.GRID_SIZE.x):
+		for y in range(state.GRID_SIZE.y):
+			for rotation in range(4):
+				var origin := Vector2i(x, y)
+				var check: Dictionary = state.can_place_module(card_id, origin, rotation)
+				if not bool(check.get("ok", false)):
+					continue
+				var score := _placement_score(state, card_id, origin, rotation, check)
+				if score > best_score:
+					best_score = score
+					best = {"origin": origin, "rotation": rotation, "score": score}
+	return best
+
+func _placement_score(state, card_id: String, origin: Vector2i, rotation: int, check: Dictionary) -> float:
+	var data = state.module_defs[card_id]
+	var score := 0.0
+	var connection: Dictionary = check.get("connection", {})
+	var neighbor_index := int(connection.get("neighbor", -1))
+	if neighbor_index == 0:
+		score += 8.0
+	var center := Vector2(state.CORE_ORIGIN) + Vector2(1.0, 1.0)
+	score -= Vector2(origin).distance_to(center) * 0.1
+	if data.category == "corridor":
+		score += 4.0
+	if data.output_rates.has("soil"):
+		score += 6.0 - float(origin.y) * 0.2
+	if data.output_rates.has("food"):
+		score += 6.0 - absf(float(origin.y - state.CORE_ORIGIN.y)) * 0.2
+	if data.external_interface:
+		score += 4.0 + float(origin.x) * 0.1
+	if card_id in ["sorter", "storage_chamber", "nursery"]:
+		score += _support_placement_score(state, card_id, origin)
+	score -= float(rotation) * 0.01
+	return score
+
+func _support_placement_score(state, card_id: String, origin: Vector2i) -> float:
+	var score := 0.0
+	match card_id:
+		"sorter":
+			for route in state.transport_routes.values():
+				var path: Array = route.get("path", [])
+				for module_index in path:
+					var module: Dictionary = state.modules[module_index]
+					var distance: int = abs(int(module["origin"].x) - origin.x) + abs(int(module["origin"].y) - origin.y)
+					score += max(0.0, 4.0 - float(distance))
+		"storage_chamber":
+			score += float(origin.x) * 0.1
+		"nursery":
+			score -= float(origin.y) * 0.1
+	return score
 
 func _best_natural_stage(state) -> String:
 	var best_id := "near_debris"
@@ -103,42 +169,13 @@ func _best_natural_stage(state) -> String:
 	return best_id
 
 func _choose_support_reward(state) -> int:
-	var pressure_key := _highest_pressure_key(state)
-	var priority: Array[String] = []
-	match pressure_key:
-		"capacity_pressure":
-			priority = ["storage_chamber", "sorter", "nursery"]
-		"worker_pressure":
-			priority = ["nursery", "storage_chamber", "sorter"]
-		"throughput_pressure":
-			priority = ["sorter", "storage_chamber", "nursery"]
-		_:
-			priority = ["storage_chamber", "nursery", "sorter"]
+	var pressure_key := StableRulesScript.highest_pressure_key(state.city_pressure)
+	var priority: Array[String] = StableRulesScript.support_priority_for_pressure(pressure_key)
 	for card_id in priority:
 		var index: int = state.reward_choices.find(card_id)
 		if index >= 0:
 			return index
 	return -1
-
-func _highest_pressure_key(state) -> String:
-	var best_key := "food_pressure"
-	var best_value := -1.0
-	for key in state.city_pressure.keys():
-		var value := float(state.city_pressure[key])
-		if value > best_value:
-			best_value = value
-			best_key = String(key)
-	return best_key
-
-func _reward_placement(card_id: String) -> Dictionary:
-	match card_id:
-		"nursery":
-			return {"x": 2, "y": 5, "r": 0}
-		"storage_chamber":
-			return {"x": 6, "y": 3, "r": 0}
-		"sorter":
-			return {"x": 6, "y": 3, "r": 0}
-	return {"x": 6, "y": 3, "r": 0}
 
 func _support_metric(state, card_id: String) -> Dictionary:
 	state.simulate_tick(0.0)
