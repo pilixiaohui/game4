@@ -66,7 +66,7 @@ func _run() -> void:
 	var food_before = int(state.resources["food"])
 	var soil_before = int(state.resources["soil"])
 	var observed_pending_output := false
-	for i in range(60):
+	for i in range(90):
 		state.simulate_tick(1.0)
 		for module_state in state.modules:
 			if _pending_total(module_state.get("pending_output", {})) > 0:
@@ -87,10 +87,12 @@ func _run() -> void:
 	# Invariant: capacity modules change caps and full storage blocks overflow.
 	var food_cap_before = int(state.capacities["food"])
 	var soil_cap_before = int(state.capacities["soil"])
+	_ensure_card(state, "storage_chamber")
+	_wait_until_placeable(state, "storage_chamber", Vector2i(6, 3), 0, 180)
 	before_place = _snapshot_state(state)
 	_assert(state.request_place_module("storage_chamber", Vector2i(6, 3), 0)["ok"], "Places storage chamber")
-	_assert_eq(int(state.resources["food"]), int(before_place["resources"]["food"]) - 2, "Storage deducts exact food cost")
-	_assert_eq(int(state.resources["soil"]), int(before_place["resources"]["soil"]) - 8, "Storage deducts exact soil cost")
+	_assert_eq(int(state.resources["food"]), int(before_place["resources"]["food"]) - 4, "Storage deducts exact food cost")
+	_assert_eq(int(state.resources["soil"]), int(before_place["resources"]["soil"]) - 12, "Storage deducts exact soil cost")
 	_assert(int(state.capacities["food"]) > food_cap_before, "Storage raises food capacity")
 	_assert(int(state.capacities["soil"]) > soil_cap_before, "Storage raises soil capacity")
 	state.resources["food"] = state.capacities["food"]
@@ -102,20 +104,21 @@ func _run() -> void:
 	_assert(int(state.overflow_waste["food"]) > waste_before, "Full storage records overflow waste")
 
 	_grant_build_resources(state)
+	_ensure_card(state, "nursery")
 	before_place = _snapshot_state(state)
 	_assert(state.request_place_module("nursery", Vector2i(2, 5), 0)["ok"], "Places nursery")
-	_assert_eq(int(state.resources["food"]), int(before_place["resources"]["food"]) - 10, "Nursery deducts exact food cost")
-	_assert_eq(int(state.resources["soil"]), int(before_place["resources"]["soil"]) - 8, "Nursery deducts exact soil cost")
-	_assert(int(state.workers["total"]) >= 9, "Nursery raises worker capacity")
-	_assert_eq(int(state.workers["total"]), int(before_place["workers"]["total"]) + 3, "Nursery raises worker capacity by exact amount")
+	_assert_eq(int(state.resources["food"]), int(before_place["resources"]["food"]) - 14, "Nursery deducts exact food cost")
+	_assert_eq(int(state.resources["soil"]), int(before_place["resources"]["soil"]) - 12, "Nursery deducts exact soil cost")
+	_assert(int(state.workers["total"]) >= 10, "Nursery raises worker capacity")
+	_assert_eq(int(state.workers["total"]), int(before_place["workers"]["total"]) + 4, "Nursery raises worker capacity by exact amount")
 	_assert_eq(int(state.resources["food"]), min(int(state.resources["food"]), int(state.capacities["food"])), "Food remains within capacity after nursery")
 	_assert_eq(int(state.resources["soil"]), min(int(state.resources["soil"]), int(state.capacities["soil"])), "Soil remains within capacity after nursery")
 
 	_grant_build_resources(state)
 	before_place = _snapshot_state(state)
 	_assert(state.request_place_module("surface_entrance", Vector2i(6, 4), 0)["ok"], "Places connected surface entrance")
-	_assert_eq(int(state.resources["food"]), int(before_place["resources"]["food"]) - 12, "Entrance deducts exact food cost")
-	_assert_eq(int(state.resources["soil"]), int(before_place["resources"]["soil"]) - 12, "Entrance deducts exact soil cost")
+	_assert_eq(int(state.resources["food"]), int(before_place["resources"]["food"]) - 22, "Entrance deducts exact food cost")
+	_assert_eq(int(state.resources["soil"]), int(before_place["resources"]["soil"]) - 22, "Entrance deducts exact soil cost")
 	_assert(state.has_external_entrance(), "Connected entrance unlocks exploration")
 
 	# Invariant: external runs require a connected entrance and workers reduce production efficiency.
@@ -149,8 +152,8 @@ func _run() -> void:
 	var pre_explore := _snapshot_state(state)
 	var start_result: Dictionary = state.start_external_stage("near_debris")
 	_assert(start_result["ok"], "Starts external exploration when entrance and workers are available")
-	_assert_eq(int(state.resources["food"]), int(pre_explore["resources"]["food"]) - 4, "Exploration deducts exact food cost")
-	_assert_eq(int(state.workers["exploring"]), 2, "Exploration reserves exact worker count")
+	_assert_eq(int(state.resources["food"]), int(pre_explore["resources"]["food"]) - 6, "Exploration deducts exact food cost")
+	_assert_eq(int(state.workers["exploring"]), 3, "Exploration reserves exact worker count")
 	_assert(state.active_external_run.has("city_pressure_snapshot"), "Exploration freezes city pressure context")
 	_assert(state.active_external_run.has("result_roll"), "Exploration stores deterministic result roll")
 	var duplicate_before := _snapshot_state(state)
@@ -159,7 +162,7 @@ func _run() -> void:
 
 	# Invariant: completed exploration creates exactly one selectable reward outcome from rules.
 	state.active_external_run["result_roll"] = 0.0
-	for i in range(21):
+	for i in range(int(state.external_stages["near_debris"].duration) + 1):
 		state.simulate_tick(1.0)
 	_assert_eq(String(state.last_external_result.get("result", "")), "success", "Low roll resolves exploration as success")
 	_assert(state.reward_choices.size() == 3, "Exploration creates three reward choices")
@@ -195,7 +198,7 @@ func _run() -> void:
 	_build_exploration_ready_state(partial_state)
 	_assert(partial_state.start_external_stage("near_debris")["ok"], "Partial setup starts exploration")
 	partial_state.active_external_run["result_roll"] = min(0.94, float(partial_state.active_external_run["success_chance"]) + 0.1)
-	for i in range(25):
+	for i in range(int(partial_state.external_stages["near_debris"].duration) + 1):
 		partial_state.simulate_tick(1.0)
 	_assert_eq(String(partial_state.last_external_result.get("result", "")), "partial", "Mid roll resolves exploration as partial")
 	partial_state.queue_free()
@@ -206,7 +209,7 @@ func _run() -> void:
 	_build_exploration_ready_state(failure_state)
 	_assert(failure_state.start_external_stage("near_debris")["ok"], "Failure setup starts risky exploration")
 	failure_state.active_external_run["result_roll"] = 0.99
-	for i in range(25):
+	for i in range(int(failure_state.external_stages["near_debris"].duration) + 1):
 		failure_state.simulate_tick(1.0)
 	_assert_eq(String(failure_state.last_external_result.get("result", "")), "failure", "High roll resolves exploration as failure")
 	_assert(failure_state.reward_choices.is_empty(), "Failure does not grant normal card choices")
@@ -223,7 +226,7 @@ func _run() -> void:
 	_assert(float(pressure_state.city_pressure["capacity_pressure"]) > 0.0, "Capacity pressure is computed from full storage")
 	_assert(pressure_state.start_external_stage("near_debris")["ok"], "Pressure reward setup starts exploration")
 	pressure_state.active_external_run["result_roll"] = 0.0
-	for i in range(25):
+	for i in range(int(pressure_state.external_stages["near_debris"].duration) + 1):
 		pressure_state.simulate_tick(1.0)
 	_assert(pressure_state.reward_choices.has("storage_chamber"), "Capacity pressure injects storage into reward choices")
 	pressure_state.queue_free()
@@ -267,6 +270,57 @@ func _run() -> void:
 	_assert(float(impact_summary["worker_satisfaction"]) < 1.0, "Production impact summary exposes global worker satisfaction")
 	_assert(int(impact_summary["constrained_count"]) > 0, "Production impact summary exposes constrained production count")
 	visible_impact_state.queue_free()
+
+	# Invariant: support rewards create measurable 3-5 minute consequences when installed.
+	var storage_effect_state = GameStateScript.new()
+	root.add_child(storage_effect_state)
+	storage_effect_state.reset_game()
+	_build_basic_production_state(storage_effect_state)
+	storage_effect_state.resources["food"] = storage_effect_state.capacities["food"] - 1
+	for i in range(180):
+		storage_effect_state.simulate_tick(1.0)
+	var waste_without_storage := int(storage_effect_state.overflow_waste["food"])
+	_ensure_card(storage_effect_state, "storage_chamber")
+	_grant_build_resources(storage_effect_state)
+	_assert(storage_effect_state.request_place_module("storage_chamber", Vector2i(6, 3), 0)["ok"], "Storage consequence setup places storage")
+	storage_effect_state.resources["food"] = 49
+	storage_effect_state.overflow_waste["food"] = 0
+	for i in range(180):
+		storage_effect_state.simulate_tick(1.0)
+	_assert(int(storage_effect_state.overflow_waste["food"]) < waste_without_storage, "Storage reward reduces overflow waste within 3 minutes")
+	storage_effect_state.queue_free()
+
+	var nursery_effect_state = GameStateScript.new()
+	root.add_child(nursery_effect_state)
+	nursery_effect_state.reset_game()
+	_build_exploration_ready_state_without_nursery(nursery_effect_state)
+	_assert(nursery_effect_state.start_external_stage("loose_soil")["ok"], "Nursery consequence setup starts worker pressure")
+	nursery_effect_state.simulate_tick(1.0)
+	var satisfaction_before_nursery := float(nursery_effect_state.workers["satisfaction"])
+	_ensure_card(nursery_effect_state, "nursery")
+	_grant_build_resources(nursery_effect_state)
+	_assert(nursery_effect_state.request_place_module("nursery", Vector2i(2, 5), 0)["ok"], "Nursery consequence setup places nursery")
+	for i in range(180):
+		nursery_effect_state.simulate_tick(1.0)
+	_assert(float(nursery_effect_state.workers["satisfaction"]) > satisfaction_before_nursery, "Nursery reward improves worker satisfaction within 3 minutes")
+	nursery_effect_state.queue_free()
+
+	var sorter_effect_state = GameStateScript.new()
+	root.add_child(sorter_effect_state)
+	sorter_effect_state.reset_game()
+	_build_basic_production_state(sorter_effect_state)
+	sorter_effect_state.simulate_tick(1.0)
+	var sorter_fungus_index := _module_index(sorter_effect_state, "fungus_farm")
+	_assert(sorter_fungus_index >= 0, "Sorter consequence setup has fungus farm")
+	var route_before_sorter: Dictionary = sorter_effect_state._route_for_module(sorter_fungus_index)
+	_ensure_card(sorter_effect_state, "sorter")
+	_grant_build_resources(sorter_effect_state)
+	_assert(sorter_effect_state.request_place_module("sorter", Vector2i(6, 3), 0)["ok"], "Sorter consequence setup places sorter")
+	sorter_effect_state.simulate_tick(1.0)
+	var route_after_sorter: Dictionary = sorter_effect_state._route_for_module(sorter_fungus_index)
+	_assert(int(route_after_sorter.get("capacity", 0)) > int(route_before_sorter.get("capacity", 0)), "Sorter reward raises adjacent route capacity")
+	_assert(float(route_after_sorter.get("load_ratio", 99.0)) < float(route_before_sorter.get("load_ratio", 0.0)), "Sorter reward lowers route load pressure")
+	sorter_effect_state.queue_free()
 
 	# Invariant: digging progress unlocks frontier cells over time, not on placement.
 	var dig_state = GameStateScript.new()
@@ -317,6 +371,13 @@ func _assert_same_snapshot(before: Dictionary, after: Dictionary, message: Strin
 	_assert(before["pending_outputs"] == after["pending_outputs"], "%s: pending outputs unchanged" % message)
 	_assert(before["overflow_waste"] == after["overflow_waste"], "%s: overflow waste unchanged" % message)
 
+func _wait_until_placeable(state, card_id: String, origin: Vector2i, rotation: int, max_seconds: int) -> void:
+	for i in range(max_seconds + 1):
+		if bool(state.can_place_module(card_id, origin, rotation).get("ok", false)):
+			return
+		state.simulate_tick(1.0)
+	_assert(false, "Timed out waiting for %s to become placeable" % card_id)
+
 func _snapshot_state(state) -> Dictionary:
 	return {
 		"resources": state.resources.duplicate(true),
@@ -359,6 +420,7 @@ func _build_worker_shortage_state(state) -> void:
 	_assert(state.request_place_module("digging_room", Vector2i(4, 1), 0)["ok"], "Shortage setup places digging room")
 	_grant_build_resources(state)
 	_assert(state.request_place_module("fungus_farm", Vector2i(2, 3), 0)["ok"], "Shortage setup places fungus farm")
+	_ensure_card(state, "storage_chamber")
 	_grant_build_resources(state)
 	_assert(state.request_place_module("storage_chamber", Vector2i(6, 3), 0)["ok"], "Shortage setup places storage")
 	_grant_build_resources(state)
@@ -368,9 +430,17 @@ func _build_worker_shortage_state(state) -> void:
 	state.hand.append("sorter")
 	_grant_build_resources(state)
 	_assert(state.request_place_module("sorter", Vector2i(6, 2), 0)["ok"], "Shortage setup places sorter")
-	state.hand.append("storage_chamber")
+	_ensure_card(state, "storage_chamber")
 	_grant_build_resources(state)
 	_assert(state.request_place_module("storage_chamber", Vector2i(2, 5), 0)["ok"], "Shortage setup places second storage")
+
+func _build_basic_production_state(state) -> void:
+	_grant_build_resources(state)
+	_assert(state.request_place_module("straight_corridor", Vector2i(4, 2), 0)["ok"], "Basic production setup places corridor")
+	_grant_build_resources(state)
+	_assert(state.request_place_module("digging_room", Vector2i(4, 1), 0)["ok"], "Basic production setup places digging room")
+	_grant_build_resources(state)
+	_assert(state.request_place_module("fungus_farm", Vector2i(2, 3), 0)["ok"], "Basic production setup places fungus farm")
 
 func _build_exploration_ready_state(state) -> void:
 	_grant_build_resources(state)
@@ -379,8 +449,10 @@ func _build_exploration_ready_state(state) -> void:
 	_assert(state.request_place_module("digging_room", Vector2i(4, 1), 0)["ok"], "Explore setup places digging room")
 	_grant_build_resources(state)
 	_assert(state.request_place_module("fungus_farm", Vector2i(2, 3), 0)["ok"], "Explore setup places fungus farm")
+	_ensure_card(state, "storage_chamber")
 	_grant_build_resources(state)
 	_assert(state.request_place_module("storage_chamber", Vector2i(6, 3), 0)["ok"], "Explore setup places storage")
+	_ensure_card(state, "nursery")
 	_grant_build_resources(state)
 	_assert(state.request_place_module("nursery", Vector2i(2, 5), 0)["ok"], "Explore setup places nursery")
 	_grant_build_resources(state)
@@ -397,6 +469,10 @@ func _build_exploration_ready_state_without_nursery(state) -> void:
 	_grant_build_resources(state)
 	_assert(state.request_place_module("surface_entrance", Vector2i(6, 4), 0)["ok"], "Impact setup places entrance")
 	_grant_build_resources(state)
+
+func _ensure_card(state, card_id: String) -> void:
+	if not state.hand.has(card_id):
+		state.hand.append(card_id)
 
 func _reward_set_for_pressure(state, stage_id: String, pressure_key: String) -> Array[String]:
 	state.city_pressure = _pressure_dict(pressure_key)

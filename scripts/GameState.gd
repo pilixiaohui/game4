@@ -39,6 +39,7 @@ var overflow_waste := {"food": 0, "soil": 0}
 var overflow_waste_tick := {"food": 0, "soil": 0}
 var frontier_cells: Dictionary = {}
 var draw_count: int = 0
+var elapsed_seconds: float = 0.0
 var catalog_errors: Array[String] = []
 
 func _ready() -> void:
@@ -54,8 +55,6 @@ func reset_game() -> void:
 		"straight_corridor",
 		"digging_room",
 		"fungus_farm",
-		"storage_chamber",
-		"nursery",
 		"surface_entrance",
 		"corner_corridor",
 	]
@@ -71,6 +70,7 @@ func reset_game() -> void:
 	overflow_waste_tick = {"food": 0, "soil": 0}
 	frontier_cells.clear()
 	draw_count = 0
+	elapsed_seconds = 0.0
 	_excavate_initial_area()
 	_refresh_frontier()
 	_place_initial_core()
@@ -260,6 +260,7 @@ func request_place_module(card_id: String, origin: Vector2i, rotation_steps: int
 	return {"ok": true, "reason": "OK", "module": module}
 
 func simulate_tick(delta: float) -> void:
+	elapsed_seconds += delta
 	overflow_waste_tick = {"food": 0, "soil": 0}
 	if active_external_run.has("id"):
 		active_external_run["remaining"] = max(0.0, float(active_external_run["remaining"]) - delta)
@@ -387,6 +388,7 @@ func _rebuild_transport_routes() -> void:
 				bottleneck_module = module_index
 			max_shared = max(max_shared, int(node_use.get(module_index, 1)))
 		var capacity: int = max(1, int(floor(float(min_throughput) / float(max_shared))))
+		capacity += _sorter_support_for_path(path)
 		var pending_total: int = _pending_total(module.get("pending_output", {}))
 		var expected_output: int = max(1, int(data.transport_output))
 		var load: float = float(max(pending_total, expected_output)) / float(capacity)
@@ -404,6 +406,18 @@ func _route_for_module(module_index: int) -> Dictionary:
 	if module_index < 0 or module_index >= modules.size():
 		return {}
 	return transport_routes.get(String(modules[module_index]["uid"]), {})
+
+func _sorter_support_for_path(path: Array[int]) -> int:
+	var support := 0
+	var counted := {}
+	for module_index in path:
+		for neighbor in _connected_neighbors(module_index):
+			if counted.has(neighbor):
+				continue
+			if String(modules[neighbor]["module_id"]) == "sorter":
+				counted[neighbor] = true
+				support += 1
+	return support
 
 func _transport_pending_outputs(delta: float) -> void:
 	var route_keys := transport_routes.keys()
@@ -585,6 +599,113 @@ func production_impact_summary() -> Dictionary:
 		"workers_exploring": int(workers.get("exploring", 0)),
 		"worst_blocker": worst_blocker,
 	}
+
+func nest_goal_summary() -> Dictionary:
+	var milestone := _first_session_milestone()
+	if not milestone.is_empty():
+		return milestone
+	var key := _highest_pressure_key()
+	var value := float(city_pressure.get(key, 0.0))
+	var label := "Keep the nest flowing"
+	var action := "Add production, storage, workers, tunnels, or explore when ready."
+	match key:
+		"food_pressure":
+			label = "Food stores are thin"
+			action = "Grow food or scout debris before starting a costly build."
+		"soil_pressure":
+			label = "Soil limits expansion"
+			action = "Run digging rooms or scout loose soil for the next chamber."
+		"worker_pressure":
+			label = "Workers are stretched"
+			action = "Choose Nursery or delay exploration until production recovers."
+		"capacity_pressure":
+			label = "Stores are near full"
+			action = "Build Storage before producers waste output."
+		"throughput_pressure":
+			label = "Tunnels are jammed"
+			action = "Add Sorter or corridors near busy production routes."
+		"expansion_pressure":
+			label = "The nest needs room"
+			action = "Let digging rooms open frontier cells before placing large modules."
+	if value <= 0.05:
+		label = "Nest is stable"
+		action = "Prepare an entrance run or shape the next production wing."
+	return {
+		"key": key,
+		"value": value,
+		"label": label,
+		"action": action,
+		"time": elapsed_seconds,
+	}
+
+func _first_session_milestone() -> Dictionary:
+	if reward_choices.size() > 0:
+		return {
+			"key": "reward_pending",
+			"value": 1.0,
+			"label": "Pick the next nest organ",
+			"action": "Choose the card that answers the strongest pressure, then keep playing to feel the tradeoff.",
+			"time": elapsed_seconds,
+		}
+	if active_external_run.has("id"):
+		return {
+			"key": "exploration_running",
+			"value": 1.0,
+			"label": "Foragers are outside",
+			"action": "Watch production slow while workers are away; recover when they return.",
+			"time": elapsed_seconds,
+		}
+	if not _has_module_id("digging_room"):
+		return {
+			"key": "build_soil",
+			"value": 0.8,
+			"label": "Start a soil line",
+			"action": "Place a corridor above the queen, then attach a Digging Room to open future cells.",
+			"time": elapsed_seconds,
+		}
+	if not _has_module_id("fungus_farm"):
+		return {
+			"key": "build_food",
+			"value": 0.8,
+			"label": "Start a food line",
+			"action": "Place a Fungus Farm on the west side so the entrance has a food budget.",
+			"time": elapsed_seconds,
+		}
+	if not _has_module_id("surface_entrance"):
+		var entrance = module_defs.get("surface_entrance", null)
+		if entrance != null:
+			return {
+				"key": "stockpile_entrance",
+				"value": 0.75,
+				"label": "Stockpile for the surface gate",
+				"action": "Need %d food and %d soil; production and tunnel load decide how soon scouting starts." % [entrance.build_cost_food, entrance.build_cost_soil],
+				"time": elapsed_seconds,
+			}
+	if last_external_result.is_empty():
+		return {
+			"key": "start_exploration",
+			"value": 0.65,
+			"label": "Choose the first scouting route",
+			"action": "Compare outlook, risk, worker draw, and likely finds before sending workers out.",
+			"time": elapsed_seconds,
+		}
+	for support_id in ["storage_chamber", "nursery", "sorter"]:
+		if hand.has(support_id) and not _has_module_id(support_id):
+			var data = module_defs[support_id]
+			return {
+				"key": "install_reward",
+				"value": 0.7,
+				"label": "Install %s" % data.display_name,
+				"action": "%s Watch the pressure meter for the next 3-5 minutes after it connects." % data.description_short,
+				"time": elapsed_seconds,
+			}
+	return {}
+
+func _has_module_id(module_id: String) -> bool:
+	for module in modules:
+		if String(module.get("module_id", "")) == module_id:
+			return true
+	return false
 
 func choose_reward(index: int) -> Dictionary:
 	if index < 0 or index >= reward_choices.size():

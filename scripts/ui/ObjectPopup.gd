@@ -47,17 +47,13 @@ func show_module(state: Dictionary, data, stages: Dictionary = {}, active_run: D
 	if data.external_interface:
 		if active_run.has("id"):
 			var impact: Dictionary = city_status.get("production_impact", {})
-			run_label.text = "Exploring: %s\nRemaining: %ds\nCity impact: %d workers outside; worker satisfaction %d%%\nProduction: %d%% avg, %d/%d constrained (%s)\nChance locked: %d%%  Risk: %d%%" % [
+			run_label.text = "%s\nReturn in %ds\n%s\n%s\nOutlook locked: %s  Risk: %s" % [
 				active_run.get("display_name", "Outside"),
 				ceili(float(active_run.get("remaining", 0.0))),
-				int(impact.get("workers_exploring", active_run.get("worker_required", 0))),
-				int(round(float(impact.get("worker_satisfaction", 1.0)) * 100.0)),
-				int(round(float(impact.get("average_efficiency", 1.0)) * 100.0)),
-				int(impact.get("constrained_count", 0)),
-				int(impact.get("production_count", 0)),
-				_blocker_text(String(impact.get("worst_blocker", "none"))).replace("Blocker: ", ""),
-				int(round(float(active_run.get("success_chance", 0.0)) * 100.0)),
-				int(round(float(active_run.get("risk", 0.0)) * 100.0)),
+				_worker_draw_text(impact, int(active_run.get("worker_required", 0))),
+				_production_drag_text(impact),
+				_outlook_text(float(active_run.get("success_chance", 0.0))),
+				_risk_text(float(active_run.get("risk", 0.0))),
 			]
 		else:
 			run_label.text = "Entrance ready"
@@ -68,13 +64,13 @@ func show_module(state: Dictionary, data, stages: Dictionary = {}, active_run: D
 				entry.add_theme_constant_override("separation", 4)
 				var summary = Label.new()
 				summary.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-				summary.text = "%s\n%d sec, %d workers, %d food\nChance %d%%, risk %d%%\nMods: %s\nRewards: %s" % [
+				summary.text = "%s\n%s, %d workers, %d food\nOutlook: %s   Risk: %s\nWhat helps: %s\nLikely finds: %s" % [
 					stage.display_name,
-					int(stage.duration),
+					_duration_text(float(stage.duration)),
 					stage.worker_required,
 					stage.food_cost,
-					int(round(float(preview.get("success_chance", 0.0)) * 100.0)),
-					int(round(float(stage.risk) * 100.0)),
+					_outlook_text(float(preview.get("success_chance", 0.0))),
+					_risk_text(float(stage.risk)),
 					_format_modifiers(Dictionary(preview.get("modifiers", {}))),
 					_format_reward_tendency(stage),
 				]
@@ -123,8 +119,10 @@ func _format_modifiers(modifiers: Dictionary) -> String:
 		var value := float(modifiers[key])
 		if absf(value) < 0.005:
 			continue
-		var sign := "+" if value >= 0.0 else ""
-		parts.append("%s%s%d%%" % [String(key).replace("_", " "), sign, int(round(value * 100.0))])
+		if value > 0.0:
+			parts.append(_modifier_label(String(key), true))
+		else:
+			parts.append(_modifier_label(String(key), false))
 	if parts.is_empty():
 		return "none"
 	return "; ".join(parts)
@@ -132,8 +130,74 @@ func _format_modifiers(modifiers: Dictionary) -> String:
 func _format_reward_tendency(stage) -> String:
 	var tags: Array[String] = []
 	for tag in stage.tags:
-		tags.append(String(tag))
+		tags.append(_tag_label(String(tag)))
 	for key in stage.reward_weights.keys():
-		if not tags.has(String(key)):
-			tags.append(String(key))
+		var label := _tag_label(String(key))
+		if not tags.has(label):
+			tags.append(label)
 	return ", ".join(tags)
+
+func _outlook_text(chance: float) -> String:
+	if chance >= 0.72:
+		return "promising"
+	if chance >= 0.55:
+		return "uncertain"
+	if chance >= 0.35:
+		return "dangerous"
+	return "desperate"
+
+func _risk_text(risk: float) -> String:
+	if risk < 0.16:
+		return "low"
+	if risk < 0.28:
+		return "medium"
+	return "high"
+
+func _duration_text(seconds: float) -> String:
+	var minutes := int(floor(seconds / 60.0))
+	var remain := int(seconds) % 60
+	if minutes <= 0:
+		return "%ds" % int(seconds)
+	return "%dm %02ds" % [minutes, remain]
+
+func _modifier_label(key: String, positive: bool) -> String:
+	match key:
+		"free_workers":
+			return "spare workers help" if positive else "thin worker crew hurts"
+		"capacity_room":
+			return "empty stores help" if positive else "full stores hurt"
+		"connected_entrance":
+			return "connected entrance helps" if positive else "entrance trouble hurts"
+		"city_pressure":
+			return "stable city helps" if positive else "city pressure hurts"
+	return String(key).replace("_", " ")
+
+func _tag_label(tag: String) -> String:
+	match tag:
+		"food":
+			return "food"
+		"soil":
+			return "soil"
+		"workers":
+			return "worker help"
+		"throughput":
+			return "tunnel relief"
+		"storage":
+			return "storage"
+		"expansion":
+			return "dig space"
+		"risk":
+			return "rare salvage"
+	return tag.replace("_", " ")
+
+func _worker_draw_text(impact: Dictionary, fallback_workers: int) -> String:
+	var workers_out := int(impact.get("workers_exploring", fallback_workers))
+	var satisfaction := int(round(float(impact.get("worker_satisfaction", 1.0)) * 100.0))
+	return "%d workers are outside; city labor is at %d%%." % [workers_out, satisfaction]
+
+func _production_drag_text(impact: Dictionary) -> String:
+	var average := int(round(float(impact.get("average_efficiency", 1.0)) * 100.0))
+	var constrained := int(impact.get("constrained_count", 0))
+	var production := int(impact.get("production_count", 0))
+	var blocker := _blocker_text(String(impact.get("worst_blocker", "none"))).replace("Blocker: ", "")
+	return "Rooms run at %d%%; %d/%d constrained by %s." % [average, constrained, production, blocker]

@@ -34,7 +34,8 @@ script = ExtResource("6_traffic")
 offset_left = 16.0
 offset_top = 12.0
 offset_right = 620.0
-offset_bottom = 42.0
+offset_bottom = 66.0
+autowrap_mode = 3
 
 [node name="BottomHandTray" type="HBoxContainer" parent="UILayer"]
 offset_left = 16.0

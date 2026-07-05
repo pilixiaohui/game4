@@ -71,7 +71,8 @@ func _refresh_all() -> void:
 	_sync_ants()
 
 func _on_resource_changed(resources: Dictionary, capacities: Dictionary, workers: Dictionary) -> void:
-	resource_label.text = "Food %d/%d   Soil %d/%d   Workers %d free / %d total   Load %d%%   Pressure %s" % [
+	var goal: Dictionary = state.nest_goal_summary()
+	resource_label.text = "Food %d/%d   Soil %d/%d   Workers %d free / %d total   Flow %d%%\n%s - %s" % [
 		resources["food"],
 		capacities["food"],
 		resources["soil"],
@@ -79,7 +80,8 @@ func _on_resource_changed(resources: Dictionary, capacities: Dictionary, workers
 		workers["free"],
 		workers["total"],
 		int(round(float(workers["satisfaction"]) * 100.0)),
-		_pressure_summary(),
+		String(goal.get("label", "Nest is stable")),
+		String(goal.get("action", _pressure_summary())),
 	]
 	_refresh_hand_affordability()
 	_refresh_selected_popup()

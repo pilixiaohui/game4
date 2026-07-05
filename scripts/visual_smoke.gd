@@ -39,10 +39,12 @@ func _run() -> void:
 	_supply_ui_smoke_resources(state)
 	for i in range(80):
 		state.simulate_tick(1.0)
+	_supply_ui_smoke_card(state, "storage_chamber")
 	_assert(state.request_place_module("storage_chamber", Vector2i(6, 3), 0)["ok"], "Storage placed")
 	_supply_ui_smoke_resources(state)
 	for i in range(80):
 		state.simulate_tick(1.0)
+	_supply_ui_smoke_card(state, "nursery")
 	_assert(state.request_place_module("nursery", Vector2i(2, 5), 0)["ok"], "Nursery placed")
 	_supply_ui_smoke_resources(state)
 	for i in range(80):
@@ -59,7 +61,7 @@ func _run() -> void:
 	main._refresh_selected_popup()
 	await process_frame
 	await _capture("06_exploring.png")
-	for i in range(21):
+	for i in range(int(state.external_stages["near_debris"].duration) + 1):
 		state.simulate_tick(1.0)
 		await process_frame
 	main._on_reward_choice_ready(state.reward_choices)
@@ -93,3 +95,7 @@ func _module_uid(state, module_id: String) -> String:
 func _supply_ui_smoke_resources(state) -> void:
 	state.resources["food"] = state.capacities["food"]
 	state.resources["soil"] = state.capacities["soil"]
+
+func _supply_ui_smoke_card(state, card_id: String) -> void:
+	if not state.hand.has(card_id):
+		state.hand.append(card_id)
