@@ -21,6 +21,7 @@ func _run() -> void:
 	_assert(main.get_node_or_null("WorldRoot/AntTrafficLayer") != null, "Main creates transport path layer")
 	_assert(main.get_node_or_null("UILayer/BottomHandTray") != null, "Main creates hand tray UI")
 	_assert(main.get_node("UILayer/BottomHandTray").get_child_count() > 0, "Main populates module hand UI")
+	_assert(main.get_node_or_null("UILayer/StockpileChoiceBar/FoodCrewButton") != null, "Main exposes stockpile work order choices")
 	_assert(main.get_node("UILayer/ObjectPopup").find_child("StageScroll", true, false) != null, "Entrance popup stage list uses a scroll boundary")
 	_assert(main.get_node_or_null("UILayer/StartOverlay") != null, "Main creates start overlay")
 	_assert(main.get_node("UILayer/StartOverlay").visible, "Start overlay is visible on first screen")
@@ -67,6 +68,7 @@ func _run() -> void:
 	var stockpile_goal: Dictionary = state.nest_goal_summary()
 	_assert(String(stockpile_goal.get("key", "")) == "stockpile_entrance", "Entrance stockpile phase has a goal")
 	_assert(String(stockpile_goal.get("action", "")).contains("Small jobs:"), "Entrance stockpile phase gives small choices or feedback goals")
+	_assert(String(stockpile_goal.get("action", "")).contains("Food, Soil, or Tunnel"), "Entrance stockpile phase points to real work order choices")
 
 	# Invariant: connected production changes resources through tick simulation.
 	var food_before = int(state.resources["food"])
@@ -89,6 +91,9 @@ func _run() -> void:
 		_assert(observed_pending_output, "Low throughput production leaves pending output during the production cycle")
 	_assert(not state.transport_routes.is_empty(), "Transport routes are tracked for active production")
 	_assert(state.city_pressure.has("throughput_pressure"), "City pressure includes throughput pressure")
+
+	# Invariant: entrance waiting choices are real work orders, not resource grants.
+	_assert_work_order_choices_have_tradeoffs()
 
 	# Invariant: capacity modules change caps and full storage blocks overflow.
 	var food_cap_before = int(state.capacities["food"])
@@ -265,13 +270,22 @@ func _run() -> void:
 	var fixed_near_debris := ["straight_corridor", "fungus_farm", "storage_chamber"]
 	var capacity_rewards := _reward_set_for_pressure(reward_probe, "near_debris", "capacity_pressure")
 	var worker_rewards := _reward_set_for_pressure(reward_probe, "near_debris", "worker_pressure")
+	var throughput_rewards := _reward_set_for_pressure(reward_probe, "near_debris", "throughput_pressure")
 	var soil_rewards := _reward_set_for_pressure(reward_probe, "near_debris", "soil_pressure")
 	_assert(capacity_rewards.has("storage_chamber"), "Capacity pressure can still offer storage")
+	_assert(capacity_rewards.has("overflow_silo"), "Capacity pressure also offers a cheaper storage tradeoff")
 	_assert(not _same_card_set(capacity_rewards, fixed_near_debris), "A fixed pool card appearing is not enough to prove pressure-shaped rewards")
 	_assert(worker_rewards.has("nursery"), "Worker pressure changes same-stage rewards toward worker capacity")
+	_assert(worker_rewards.has("shift_roost"), "Worker pressure also offers a smaller worker tradeoff")
+	_assert(throughput_rewards.has("sorter"), "Throughput pressure can offer Sorter")
+	_assert(throughput_rewards.has("relay_junction"), "Throughput pressure also offers Relay Junction")
 	_assert(soil_rewards.has("digging_room"), "Soil pressure changes same-stage rewards toward soil production")
+	_assert(_pressure_solution_count(reward_probe, capacity_rewards, "capacity_pressure") >= 2, "Same stage has at least two capacity solutions")
+	_assert(_pressure_solution_count(reward_probe, worker_rewards, "worker_pressure") >= 2, "Same stage has at least two worker solutions")
+	_assert(_pressure_solution_count(reward_probe, throughput_rewards, "throughput_pressure") >= 2, "Same stage has at least two throughput solutions")
 	_assert(_set_key(capacity_rewards) != _set_key(worker_rewards), "Same stage has different reward set under capacity vs worker pressure")
 	_assert(_set_key(worker_rewards) != _set_key(soil_rewards), "Same stage has different reward set under worker vs soil pressure")
+	_assert(_set_key(throughput_rewards) != _set_key(capacity_rewards), "Same stage has different reward set under throughput vs capacity pressure")
 	reward_probe.queue_free()
 
 	var visible_impact_state = GameStateScript.new()
@@ -318,6 +332,18 @@ func _run() -> void:
 	_assert(int(storage_effect_state.overflow_waste["food"]) < waste_without_storage, "Storage reward reduces overflow waste within 3 minutes")
 	storage_effect_state.queue_free()
 
+	var silo_effect_state = GameStateScript.new()
+	root.add_child(silo_effect_state)
+	silo_effect_state.reset_game()
+	_build_basic_production_state(silo_effect_state)
+	var silo_food_cap_before := int(silo_effect_state.capacities["food"])
+	_ensure_card(silo_effect_state, "overflow_silo")
+	_grant_build_resources(silo_effect_state)
+	_assert(silo_effect_state.request_place_module("overflow_silo", Vector2i(6, 3), 0)["ok"], "Overflow Silo consequence setup places silo")
+	_assert(int(silo_effect_state.capacities["food"]) > silo_food_cap_before, "Overflow Silo raises capacity")
+	_assert(int(silo_effect_state.capacities["food"]) < int(silo_effect_state.module_defs["storage_chamber"].storage["food"]) + 50, "Overflow Silo has a smaller capacity payoff than Storage Chamber")
+	silo_effect_state.queue_free()
+
 	var nursery_effect_state = GameStateScript.new()
 	root.add_child(nursery_effect_state)
 	nursery_effect_state.reset_game()
@@ -332,6 +358,18 @@ func _run() -> void:
 		nursery_effect_state.simulate_tick(1.0)
 	_assert(float(nursery_effect_state.workers["satisfaction"]) > satisfaction_before_nursery, "Nursery reward improves worker satisfaction within 3 minutes")
 	nursery_effect_state.queue_free()
+
+	var roost_effect_state = GameStateScript.new()
+	root.add_child(roost_effect_state)
+	roost_effect_state.reset_game()
+	_build_exploration_ready_state_without_nursery(roost_effect_state)
+	var workers_before_roost := int(roost_effect_state.workers["total"])
+	_ensure_card(roost_effect_state, "shift_roost")
+	_grant_build_resources(roost_effect_state)
+	_assert(roost_effect_state.request_place_module("shift_roost", Vector2i(6, 3), 0)["ok"], "Shift Roost consequence setup places roost")
+	_assert_eq(int(roost_effect_state.workers["total"]), workers_before_roost + 2, "Shift Roost adds fewer workers than Nursery")
+	_assert(int(roost_effect_state.module_defs["shift_roost"].build_cost_food + roost_effect_state.module_defs["shift_roost"].build_cost_soil) < int(roost_effect_state.module_defs["nursery"].build_cost_food + roost_effect_state.module_defs["nursery"].build_cost_soil), "Shift Roost is cheaper than Nursery")
+	roost_effect_state.queue_free()
 
 	var sorter_effect_state = GameStateScript.new()
 	root.add_child(sorter_effect_state)
@@ -349,6 +387,22 @@ func _run() -> void:
 	_assert(int(route_after_sorter.get("capacity", 0)) > int(route_before_sorter.get("capacity", 0)), "Sorter reward raises adjacent route capacity")
 	_assert(float(route_after_sorter.get("load_ratio", 99.0)) < float(route_before_sorter.get("load_ratio", 0.0)), "Sorter reward lowers route load pressure")
 	sorter_effect_state.queue_free()
+
+	var relay_effect_state = GameStateScript.new()
+	root.add_child(relay_effect_state)
+	relay_effect_state.reset_game()
+	_build_basic_production_state(relay_effect_state)
+	relay_effect_state.simulate_tick(1.0)
+	var relay_fungus_index := _module_index(relay_effect_state, "fungus_farm")
+	var route_before_relay: Dictionary = relay_effect_state._route_for_module(relay_fungus_index)
+	_ensure_card(relay_effect_state, "relay_junction")
+	_grant_build_resources(relay_effect_state)
+	_assert(relay_effect_state.request_place_module("relay_junction", Vector2i(6, 3), 0)["ok"], "Relay Junction consequence setup places relay")
+	relay_effect_state.simulate_tick(1.0)
+	var route_after_relay: Dictionary = relay_effect_state._route_for_module(relay_fungus_index)
+	_assert(int(route_after_relay.get("capacity", 0)) > int(route_before_relay.get("capacity", 0)), "Relay Junction also raises adjacent route capacity")
+	_assert(int(route_after_sorter.get("capacity", 0)) > int(route_after_relay.get("capacity", 0)), "Sorter has a stronger route payoff than Relay Junction")
+	relay_effect_state.queue_free()
 
 	# Invariant: digging progress unlocks frontier cells over time, not on placement.
 	var dig_state = GameStateScript.new()
@@ -386,6 +440,51 @@ func _assert_invalid_place_has_no_side_effects(state, card_id: String, origin: V
 	var result: Dictionary = state.request_place_module(card_id, origin, rotation_steps)
 	_assert(not bool(result["ok"]), message)
 	_assert_same_snapshot(before, _snapshot_state(state), "%s has no side effects" % message)
+
+func _assert_work_order_choices_have_tradeoffs() -> void:
+	var food_state = GameStateScript.new()
+	root.add_child(food_state)
+	food_state.reset_game()
+	_build_basic_production_state(food_state)
+	food_state.resources["food"] = 0
+	food_state.resources["soil"] = 0
+	var food_before := _snapshot_state(food_state)
+	_assert(food_state.set_work_order("food_crew")["ok"], "Food Crew work order is accepted")
+	_assert_eq(food_before["resources"], _snapshot_state(food_state)["resources"], "Work order choice does not grant resources")
+	for i in range(120):
+		food_state.simulate_tick(1.0)
+	var food_focus_food := int(food_state.resources["food"])
+	var food_focus_soil := int(food_state.resources["soil"])
+	food_state.queue_free()
+
+	var soil_state = GameStateScript.new()
+	root.add_child(soil_state)
+	soil_state.reset_game()
+	_build_basic_production_state(soil_state)
+	soil_state.resources["food"] = 0
+	soil_state.resources["soil"] = 0
+	_assert(soil_state.set_work_order("soil_crew")["ok"], "Soil Crew work order is accepted")
+	for i in range(120):
+		soil_state.simulate_tick(1.0)
+	var soil_focus_food := int(soil_state.resources["food"])
+	var soil_focus_soil := int(soil_state.resources["soil"])
+	soil_state.queue_free()
+
+	var tunnel_state = GameStateScript.new()
+	root.add_child(tunnel_state)
+	tunnel_state.reset_game()
+	_build_basic_production_state(tunnel_state)
+	tunnel_state.simulate_tick(1.0)
+	var fungus_index := _module_index(tunnel_state, "fungus_farm")
+	var balanced_route: Dictionary = tunnel_state._route_for_module(fungus_index)
+	_assert(tunnel_state.set_work_order("tunnel_crew")["ok"], "Tunnel Crew work order is accepted")
+	tunnel_state.simulate_tick(1.0)
+	var tunnel_route: Dictionary = tunnel_state._route_for_module(fungus_index)
+	_assert(int(tunnel_route.get("capacity", 0)) > int(balanced_route.get("capacity", 0)), "Tunnel Crew raises route capacity")
+	tunnel_state.queue_free()
+
+	_assert(food_focus_food > soil_focus_food, "Food Crew produces more food than Soil Crew")
+	_assert(soil_focus_soil > food_focus_soil, "Soil Crew produces more soil than Food Crew")
 
 func _assert_same_snapshot(before: Dictionary, after: Dictionary, message: String) -> void:
 	_assert(before["resources"] == after["resources"], "%s: resources unchanged" % message)
@@ -543,6 +642,16 @@ func _set_key(cards: Array) -> String:
 		copy.append(String(card_id))
 	copy.sort()
 	return "|".join(copy)
+
+func _pressure_solution_count(state, cards: Array, pressure_key: String) -> int:
+	var count := 0
+	for card_id in cards:
+		if not state.module_defs.has(card_id):
+			continue
+		var data = state.module_defs[card_id]
+		if data.solves_pressure.has(pressure_key):
+			count += 1
+	return count
 
 func _grant_build_resources(state) -> void:
 	state.resources["food"] = state.capacities["food"]

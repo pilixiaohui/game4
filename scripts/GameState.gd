@@ -41,6 +41,7 @@ var transport_routes: Dictionary = {}
 var overflow_waste := {"food": 0, "soil": 0}
 var overflow_waste_tick := {"food": 0, "soil": 0}
 var frontier_cells: Dictionary = {}
+var work_order: String = "balanced"
 var draw_count: int = 0
 var elapsed_seconds: float = 0.0
 var catalog_errors: Array[String] = []
@@ -72,6 +73,7 @@ func reset_game() -> void:
 	overflow_waste = {"food": 0, "soil": 0}
 	overflow_waste_tick = {"food": 0, "soil": 0}
 	frontier_cells.clear()
+	work_order = "balanced"
 	draw_count = 0
 	elapsed_seconds = 0.0
 	_excavate_initial_area()
@@ -261,6 +263,25 @@ func request_place_module(card_id: String, origin: Vector2i, rotation_steps: int
 	feedback.emit("%s connected" % data.display_name)
 	return {"ok": true, "reason": "OK", "module": module}
 
+func set_work_order(order_id: String) -> Dictionary:
+	if not ["balanced", "food_crew", "soil_crew", "tunnel_crew"].has(order_id):
+		return {"ok": false, "reason": "Unknown work order"}
+	work_order = order_id
+	_recalculate_city_stats()
+	resource_changed.emit(resources.duplicate(), capacities.duplicate(), workers.duplicate())
+	feedback.emit("Work order: %s" % work_order_label())
+	return {"ok": true, "work_order": work_order}
+
+func work_order_label() -> String:
+	match work_order:
+		"food_crew":
+			return "Feed fungus first"
+		"soil_crew":
+			return "Dig soil first"
+		"tunnel_crew":
+			return "Clear tunnel loads"
+	return "Balanced crews"
+
 func simulate_tick(delta: float) -> void:
 	elapsed_seconds += delta
 	overflow_waste_tick = {"food": 0, "soil": 0}
@@ -288,7 +309,8 @@ func simulate_tick(delta: float) -> void:
 		var throughput_efficiency = _route_efficiency_for_module(i, path, data)
 		var adjacency_bonus = _adjacency_bonus(i)
 		var worker_effect = float(workers["satisfaction"])
-		var efficiency = worker_effect * throughput_efficiency * adjacency_bonus
+		var order_effect = _work_order_efficiency_for_module(data)
+		var efficiency = worker_effect * throughput_efficiency * adjacency_bonus * order_effect
 		module["efficiency"] = efficiency
 		module["path"] = path
 		module["progress"] = float(module.get("progress", 0.0)) + delta * efficiency
@@ -390,7 +412,8 @@ func _rebuild_transport_routes() -> void:
 				bottleneck_module = module_index
 			max_shared = max(max_shared, int(node_use.get(module_index, 1)))
 		var capacity: int = max(1, int(floor(float(min_throughput) / float(max_shared))))
-		capacity += _sorter_support_for_path(path)
+		capacity += _route_support_for_path(path)
+		capacity += _work_order_transport_bonus()
 		var pending_total: int = _pending_total(module.get("pending_output", {}))
 		var expected_output: int = max(1, int(data.transport_output))
 		var load: float = float(max(pending_total, expected_output)) / float(capacity)
@@ -409,17 +432,41 @@ func _route_for_module(module_index: int) -> Dictionary:
 		return {}
 	return transport_routes.get(String(modules[module_index]["uid"]), {})
 
-func _sorter_support_for_path(path: Array[int]) -> int:
+func _route_support_for_path(path: Array[int]) -> int:
 	var support := 0
 	var counted := {}
 	for module_index in path:
 		for neighbor in _connected_neighbors(module_index):
 			if counted.has(neighbor):
 				continue
-			if String(modules[neighbor]["module_id"]) == "sorter":
+			var support_id := String(modules[neighbor]["module_id"])
+			if support_id == "sorter":
+				counted[neighbor] = true
+				support += 2
+			elif support_id == "relay_junction":
 				counted[neighbor] = true
 				support += 1
 	return support
+
+func _work_order_transport_bonus() -> int:
+	return 1 if work_order == "tunnel_crew" else 0
+
+func _work_order_efficiency_for_module(data) -> float:
+	match work_order:
+		"food_crew":
+			if data.output_rates.has("food"):
+				return 1.2
+			if data.output_rates.has("soil"):
+				return 0.9
+		"soil_crew":
+			if data.output_rates.has("soil"):
+				return 1.2
+			if data.output_rates.has("food"):
+				return 0.9
+		"tunnel_crew":
+			if not data.output_rates.is_empty():
+				return 0.95
+	return 1.0
 
 func _transport_pending_outputs(delta: float) -> void:
 	var route_keys := transport_routes.keys()
@@ -968,6 +1015,7 @@ func _preview_snapshot() -> Dictionary:
 		"resources": resources.duplicate(true),
 		"capacities": capacities.duplicate(true),
 		"workers": workers.duplicate(true),
+		"work_order": work_order,
 		"city_pressure": city_pressure.duplicate(true),
 		"has_external_entrance": has_external_entrance(),
 	}
@@ -977,6 +1025,7 @@ func _goal_snapshot() -> Dictionary:
 		"resources": resources.duplicate(true),
 		"capacities": capacities.duplicate(true),
 		"workers": workers.duplicate(true),
+		"work_order": work_order,
 		"hand": hand.duplicate(),
 		"modules": modules.duplicate(true),
 		"module_defs": module_defs,

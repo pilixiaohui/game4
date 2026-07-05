@@ -34,6 +34,7 @@ func _run() -> void:
 	var entrance_time: float = state.elapsed_seconds
 
 	var stage_id := _best_natural_stage(state)
+	_wait_until_stage_startable(state, stage_id, 180.0)
 	var start_result: Dictionary = state.start_external_stage(stage_id)
 	_assert(bool(start_result.get("ok", false)), "Natural path starts exploration")
 	_record(state, "sent workers to %s" % state.external_stages[stage_id].display_name)
@@ -89,17 +90,45 @@ func _wait_until_search_placeable(state, card_id: String, timeout: float) -> voi
 			_fail("Timed out waiting to place %s through legal search" % card_id)
 			return
 
+func _wait_until_stage_startable(state, stage_id: String, timeout: float) -> void:
+	var start_time := float(state.elapsed_seconds)
+	while failures.is_empty():
+		var stage = state.external_stages[stage_id]
+		if int(state.resources["food"]) >= stage.food_cost and int(state.workers["total"]) >= stage.worker_required:
+			return
+		state.simulate_tick(1.0)
+		if float(state.elapsed_seconds) - start_time > timeout:
+			_fail("Timed out waiting to start %s without resource grants" % stage_id)
+			return
+
 func _make_stockpile_choice_before_entrance(state, _entrance_card: String) -> void:
 	var goal: Dictionary = state.nest_goal_summary()
+	var order_id := _stockpile_order_for_gap(state)
+	var order_result: Dictionary = state.set_work_order(order_id)
+	_assert(bool(order_result.get("ok", false)), "Natural smoke can choose a stockpile work order")
 	var choices: Array[String] = []
 	for card_id in SCENARIO["stockpile_choice_cards"]:
 		var typed_id := String(card_id)
 		if state.hand.has(typed_id) and not _best_placement(state, typed_id).is_empty():
 			choices.append("optional %s fit" % typed_id)
-	_record(state, "stockpile feedback: %s | %s" % [
+	_record(state, "stockpile decision: %s | %s | %s" % [
+		state.work_order_label(),
 		", ".join(choices) if not choices.is_empty() else "no safe side build yet",
 		String(goal.get("action", "watch food/soil/flow")),
 	])
+
+func _stockpile_order_for_gap(state) -> String:
+	var entrance = state.module_defs[String(SCENARIO["entrance_card"])]
+	var food_gap: int = max(0, int(entrance.build_cost_food) - int(state.resources.get("food", 0)))
+	var soil_gap: int = max(0, int(entrance.build_cost_soil) - int(state.resources.get("soil", 0)))
+	var pressure_key := StableRulesScript.highest_pressure_key(state.city_pressure)
+	if pressure_key == "throughput_pressure" and abs(food_gap - soil_gap) <= 4:
+		return "tunnel_crew"
+	if soil_gap > food_gap:
+		return "soil_crew"
+	if food_gap > soil_gap:
+		return "food_crew"
+	return "balanced"
 
 func _place_card_via_search(state, card_id: String, label: String) -> void:
 	if not failures.is_empty():
@@ -194,20 +223,20 @@ func _choose_support_reward(state) -> int:
 func _support_metric(state, card_id: String) -> Dictionary:
 	state.simulate_tick(0.0)
 	match card_id:
-		"storage_chamber":
+		"storage_chamber", "overflow_silo":
 			return {
 				"capacity_pressure": float(state.city_pressure.get("capacity_pressure", 0.0)),
 				"food_cap": int(state.capacities["food"]),
 				"soil_cap": int(state.capacities["soil"]),
 				"waste": int(state.overflow_waste["food"]) + int(state.overflow_waste["soil"]),
 			}
-		"nursery":
+		"nursery", "shift_roost":
 			return {
 				"worker_pressure": float(state.city_pressure.get("worker_pressure", 0.0)),
 				"satisfaction": float(state.workers["satisfaction"]),
 				"workers": int(state.workers["total"]),
 			}
-		"sorter":
+		"sorter", "relay_junction":
 			return {
 				"throughput_pressure": float(state.city_pressure.get("throughput_pressure", 0.0)),
 				"worst_load": _worst_route_load(state),
@@ -216,11 +245,11 @@ func _support_metric(state, card_id: String) -> Dictionary:
 
 func _support_metric_improved(card_id: String, before: Dictionary, after: Dictionary) -> bool:
 	match card_id:
-		"storage_chamber":
+		"storage_chamber", "overflow_silo":
 			return int(after.get("food_cap", 0)) > int(before.get("food_cap", 0)) and float(after.get("capacity_pressure", 1.0)) <= float(before.get("capacity_pressure", 1.0))
-		"nursery":
+		"nursery", "shift_roost":
 			return int(after.get("workers", 0)) > int(before.get("workers", 0)) and float(after.get("satisfaction", 0.0)) >= float(before.get("satisfaction", 0.0))
-		"sorter":
+		"sorter", "relay_junction":
 			return float(after.get("worst_load", 99.0)) < float(before.get("worst_load", 0.0)) or float(after.get("throughput_pressure", 1.0)) <= float(before.get("throughput_pressure", 1.0))
 	return false
 

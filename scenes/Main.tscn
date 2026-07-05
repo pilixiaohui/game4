@@ -49,6 +49,30 @@ offset_top = 548.0
 offset_right = 840.0
 offset_bottom = 578.0
 
+[node name="StockpileChoiceBar" type="HBoxContainer" parent="UILayer"]
+visible = false
+offset_left = 16.0
+offset_top = 500.0
+offset_right = 330.0
+offset_bottom = 538.0
+theme_override_constants/separation = 8
+
+[node name="FoodCrewButton" type="Button" parent="UILayer/StockpileChoiceBar"]
+custom_minimum_size = Vector2(68, 34)
+text = "Food"
+
+[node name="SoilCrewButton" type="Button" parent="UILayer/StockpileChoiceBar"]
+custom_minimum_size = Vector2(68, 34)
+text = "Soil"
+
+[node name="TunnelCrewButton" type="Button" parent="UILayer/StockpileChoiceBar"]
+custom_minimum_size = Vector2(74, 34)
+text = "Tunnel"
+
+[node name="BalancedCrewButton" type="Button" parent="UILayer/StockpileChoiceBar"]
+custom_minimum_size = Vector2(70, 34)
+text = "Balance"
+
 [node name="ObjectPopup" type="PanelContainer" parent="UILayer"]
 offset_left = 860.0
 offset_top = 96.0

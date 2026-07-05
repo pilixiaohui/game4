@@ -13,6 +13,11 @@ const CELL_SIZE := 56
 @onready var resource_label: Label = $UILayer/TopResourceBar
 @onready var hand_tray: HBoxContainer = $UILayer/BottomHandTray
 @onready var feedback_label: Label = $UILayer/FeedbackQueue
+@onready var stockpile_choice_bar: HBoxContainer = $UILayer/StockpileChoiceBar
+@onready var food_crew_button: Button = $UILayer/StockpileChoiceBar/FoodCrewButton
+@onready var soil_crew_button: Button = $UILayer/StockpileChoiceBar/SoilCrewButton
+@onready var tunnel_crew_button: Button = $UILayer/StockpileChoiceBar/TunnelCrewButton
+@onready var balanced_crew_button: Button = $UILayer/StockpileChoiceBar/BalancedCrewButton
 @onready var popup = $UILayer/ObjectPopup
 @onready var modal_dimmer: ColorRect = $UILayer/ModalDimmer
 @onready var reward_choice = $UILayer/RewardChoice
@@ -58,6 +63,10 @@ func _wire_signals() -> void:
 	popup.external_stage_selected.connect(_on_external_stage_selected)
 	reward_choice.reward_picked.connect(_on_reward_picked)
 	start_button.pressed.connect(_on_start_pressed)
+	food_crew_button.pressed.connect(func() -> void: _on_work_order_selected("food_crew"))
+	soil_crew_button.pressed.connect(func() -> void: _on_work_order_selected("soil_crew"))
+	tunnel_crew_button.pressed.connect(func() -> void: _on_work_order_selected("tunnel_crew"))
+	balanced_crew_button.pressed.connect(func() -> void: _on_work_order_selected("balanced"))
 	simulation_timer.timeout.connect(func() -> void: state.simulate_tick(1.0))
 
 func _on_start_pressed() -> void:
@@ -84,6 +93,7 @@ func _on_resource_changed(resources: Dictionary, capacities: Dictionary, workers
 		String(goal.get("action", _pressure_summary())),
 	]
 	_refresh_hand_affordability()
+	_refresh_stockpile_choices()
 	_refresh_selected_popup()
 
 func _on_hand_changed(hand: Array[String]) -> void:
@@ -200,6 +210,10 @@ func _on_external_stage_selected(stage_id: String) -> void:
 	_refresh_selected_popup()
 	_sync_ants()
 
+func _on_work_order_selected(order_id: String) -> void:
+	var result: Dictionary = state.set_work_order(order_id)
+	_on_feedback("Crew focus changed" if result.get("ok", false) else String(result.get("reason", "Cannot change crew focus")))
+
 func _on_external_run_changed(_run_state: Dictionary) -> void:
 	_refresh_selected_popup()
 
@@ -251,6 +265,23 @@ func _refresh_selected_popup() -> void:
 			var data = state.module_defs[module_state["module_id"]]
 			popup.show_module(module_state, data, state.external_stages, state.active_external_run, state.external_stage_previews(), _city_status())
 			return
+
+func _refresh_stockpile_choices() -> void:
+	var should_show: bool = not state.has_external_entrance() and state.modules.size() >= 3 and state.reward_choices.is_empty()
+	stockpile_choice_bar.visible = should_show
+	var selected: String = state.work_order
+	for button in [food_crew_button, soil_crew_button, tunnel_crew_button, balanced_crew_button]:
+		button.disabled = false
+		button.modulate = Color.WHITE
+	match selected:
+		"food_crew":
+			food_crew_button.modulate = Color(1.0, 0.86, 0.45, 1.0)
+		"soil_crew":
+			soil_crew_button.modulate = Color(1.0, 0.86, 0.45, 1.0)
+		"tunnel_crew":
+			tunnel_crew_button.modulate = Color(1.0, 0.86, 0.45, 1.0)
+		"balanced":
+			balanced_crew_button.modulate = Color(1.0, 0.86, 0.45, 1.0)
 
 func _pressure_summary() -> String:
 	if state.city_pressure.is_empty():

@@ -55,13 +55,13 @@ static func pressure_reason(pressure_key: String) -> String:
 static func support_priority_for_pressure(pressure_key: String) -> Array[String]:
 	match pressure_key:
 		"capacity_pressure":
-			return ["storage_chamber", "sorter", "nursery"]
+			return ["storage_chamber", "overflow_silo", "sorter", "nursery"]
 		"worker_pressure":
-			return ["nursery", "storage_chamber", "sorter"]
+			return ["nursery", "shift_roost", "storage_chamber", "sorter"]
 		"throughput_pressure":
-			return ["sorter", "storage_chamber", "nursery"]
+			return ["sorter", "relay_junction", "storage_chamber", "overflow_silo", "nursery"]
 		"soil_pressure":
-			return ["digging_room", "storage_chamber", "sorter"]
+			return ["digging_room", "relay_junction", "storage_chamber", "sorter"]
 		"food_pressure":
-			return ["fungus_farm", "storage_chamber", "nursery"]
-	return ["storage_chamber", "nursery", "sorter"]
+			return ["fungus_farm", "overflow_silo", "storage_chamber", "nursery"]
+	return ["storage_chamber", "overflow_silo", "nursery", "shift_roost", "sorter", "relay_junction"]

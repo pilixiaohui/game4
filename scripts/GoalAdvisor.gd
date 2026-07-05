@@ -48,6 +48,7 @@ static func _first_session_milestone(snapshot: Dictionary) -> Dictionary:
 	var active_external_run: Dictionary = snapshot.get("active_external_run", {})
 	var last_external_result: Dictionary = snapshot.get("last_external_result", {})
 	var resources: Dictionary = snapshot.get("resources", {})
+	var work_order := String(snapshot.get("work_order", "balanced"))
 	var elapsed := float(snapshot.get("elapsed_seconds", 0.0))
 	if reward_choices.size() > 0:
 		return _result("reward_pending", 1.0, "Pick the next nest organ", "Choose the card that answers the strongest pressure, then keep playing to feel the tradeoff.", elapsed)
@@ -63,13 +64,13 @@ static func _first_session_milestone(snapshot: Dictionary) -> Dictionary:
 			var food_gap: int = max(0, int(entrance.build_cost_food) - int(resources.get("food", 0)))
 			var soil_gap: int = max(0, int(entrance.build_cost_soil) - int(resources.get("soil", 0)))
 			var pressure_key := StableRulesScript.highest_pressure_key(snapshot.get("city_pressure", {}))
-			var action := _stockpile_action(food_gap, soil_gap, hand, module_defs, resources, pressure_key)
+			var action := _stockpile_action(food_gap, soil_gap, hand, module_defs, resources, pressure_key, work_order)
 			if food_gap == 0 and soil_gap > 0:
 				action = "Food is ready; soil is the next gate. Small jobs: keep digging rooms connected, check tunnel flow, or fit a turn path."
 			elif soil_gap == 0 and food_gap > 0:
 				action = "Soil is ready; food is the next gate. Small jobs: keep fungus moving, check worker drag, or fit a turn path."
 			elif pressure_key == "throughput_pressure":
-				action = "Resources are coming, but tunnels are busy. Small jobs: place a turn path if it fits, then watch pending loads clear."
+				action = "Resources are coming, but tunnels are busy. Small jobs: pick Food, Soil, or Tunnel crew focus; Tunnel Crew clears loads but slows production."
 			elif pressure_key == "food_pressure":
 				action = "Food is the slow lever. Small jobs: watch the fungus cycle, keep tunnels clear, then fund the gate."
 			elif pressure_key == "soil_pressure":
@@ -92,19 +93,33 @@ static func _result(key: String, value: float, label: String, action: String, el
 		"time": elapsed,
 	}
 
-static func _stockpile_action(food_gap: int, soil_gap: int, hand: Array, module_defs: Dictionary, resources: Dictionary, pressure_key: String) -> String:
+static func _stockpile_action(food_gap: int, soil_gap: int, hand: Array, module_defs: Dictionary, resources: Dictionary, pressure_key: String, work_order: String) -> String:
 	var jobs: Array[String] = []
-	if _can_afford_card("corner_corridor", hand, module_defs, resources):
-		jobs.append("fit a Corner Corridor for the next relief path")
-	elif hand.has("corner_corridor"):
-		jobs.append("save 2 soil for a Corner Corridor option")
-	jobs.append("watch fungus food close +%d" % food_gap)
-	jobs.append("watch digging soil close +%d" % soil_gap)
+	if work_order == "balanced":
+		jobs.append("pick Food, Soil, or Tunnel crew focus")
+	else:
+		jobs.append("current focus: %s" % _work_order_label(work_order))
+	if food_gap >= soil_gap:
+		jobs.append("Food Crew speeds fungus but slows digging")
+	else:
+		jobs.append("Soil Crew speeds digging but slows fungus")
 	if pressure_key == "throughput_pressure":
-		jobs.append("wait for tunnel loads to clear")
+		jobs.append("Tunnel Crew clears loads but slows production")
 	elif pressure_key == "worker_pressure":
 		jobs.append("avoid sending workers out yet")
+	elif _can_afford_card("corner_corridor", hand, module_defs, resources):
+		jobs.append("fit a Corner Corridor if you want path options")
 	return "Need %d food and %d soil. Small jobs: %s." % [food_gap, soil_gap, "; ".join(jobs.slice(0, 3))]
+
+static func _work_order_label(work_order: String) -> String:
+	match work_order:
+		"food_crew":
+			return "Food Crew"
+		"soil_crew":
+			return "Soil Crew"
+		"tunnel_crew":
+			return "Tunnel Crew"
+	return "Balanced"
 
 static func _can_afford_card(card_id: String, hand: Array, module_defs: Dictionary, resources: Dictionary) -> bool:
 	if not hand.has(card_id) or not module_defs.has(card_id):

@@ -9,8 +9,11 @@ static func generate(stage, result: String, module_defs: Dictionary, city_pressu
 	var pressure_key := StableRulesScript.highest_pressure_key(city_pressure)
 	var pool := _expanded_reward_pool(stage, module_defs, pressure_key)
 	_add_best_reward_for_pressure(choices, context, pool, module_defs, pressure_key)
-	_add_best_reward_for_tags(choices, context, pool, module_defs, stage.tags, "Matches the outside site theme")
-	_add_weighted_reward(choices, context, pool, module_defs, stage, city_pressure, "%s:%s:%d" % [stage.id, result, draw_count])
+	_add_pressure_tradeoff_reward(choices, context, pool, module_defs, pressure_key)
+	if choices.size() < 3:
+		_add_best_reward_for_tags(choices, context, pool, module_defs, stage.tags, "Matches the outside site theme")
+	if choices.size() < 3:
+		_add_weighted_reward(choices, context, pool, module_defs, stage, city_pressure, "%s:%s:%d" % [stage.id, result, draw_count])
 	if result == "partial" and choices.size() > 0:
 		var card_id := choices[0]
 		context[card_id] = "%s after a partial return" % String(context.get(card_id, "Stabilizes the city"))
@@ -78,6 +81,35 @@ static func _add_best_reward_for_pressure(choices: Array[String], context: Dicti
 	if best_id != "":
 		choices.append(best_id)
 		context[best_id] = StableRulesScript.pressure_reason(pressure_key)
+
+static func _add_pressure_tradeoff_reward(choices: Array[String], context: Dictionary, pool: Array[String], module_defs: Dictionary, pressure_key: String) -> void:
+	if choices.is_empty():
+		return
+	var primary_id := String(choices[0])
+	var primary_data = module_defs[primary_id]
+	var best_id := ""
+	var best_score := -9999.0
+	for card_id in pool:
+		if not module_defs.has(card_id) or choices.has(card_id):
+			continue
+		var data = module_defs[card_id]
+		if not data.solves_pressure.has(pressure_key):
+			continue
+		var score := float(data.solves_pressure.get(pressure_key, 0)) * 2.0
+		if data.category != primary_data.category:
+			score += 1.5
+		if data.worker_need != primary_data.worker_need:
+			score += 0.75
+		var primary_cost := int(primary_data.build_cost_food) + int(primary_data.build_cost_soil)
+		var cost := int(data.build_cost_food) + int(data.build_cost_soil)
+		if cost != primary_cost:
+			score += min(1.0, absf(float(cost - primary_cost)) / 10.0)
+		if score > best_score or (is_equal_approx(score, best_score) and String(card_id) < best_id):
+			best_score = score
+			best_id = card_id
+	if best_id != "":
+		choices.append(best_id)
+		context[best_id] = "%s with a different cost profile" % StableRulesScript.pressure_reason(pressure_key)
 
 static func _add_best_reward_for_tags(choices: Array[String], context: Dictionary, pool: Array[String], module_defs: Dictionary, tags: Array[String], reason: String) -> void:
 	var best_id := ""
