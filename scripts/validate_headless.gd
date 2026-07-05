@@ -2,6 +2,7 @@ extends SceneTree
 
 const GameStateScript := preload("res://scripts/GameState.gd")
 const StableRulesScript := preload("res://scripts/StableRules.gd")
+const GoalAdvisorScript := preload("res://scripts/GoalAdvisor.gd")
 
 var failures: Array[String] = []
 
@@ -20,6 +21,7 @@ func _run() -> void:
 	_assert(main.get_node_or_null("WorldRoot/AntTrafficLayer") != null, "Main creates transport path layer")
 	_assert(main.get_node_or_null("UILayer/BottomHandTray") != null, "Main creates hand tray UI")
 	_assert(main.get_node("UILayer/BottomHandTray").get_child_count() > 0, "Main populates module hand UI")
+	_assert(main.get_node("UILayer/ObjectPopup").find_child("StageScroll", true, false) != null, "Entrance popup stage list uses a scroll boundary")
 	_assert(main.get_node_or_null("UILayer/StartOverlay") != null, "Main creates start overlay")
 	_assert(main.get_node("UILayer/StartOverlay").visible, "Start overlay is visible on first screen")
 	_assert(main.get_node_or_null("UILayer/ModalDimmer") != null, "Main creates modal dimmer")
@@ -62,6 +64,9 @@ func _run() -> void:
 	_assert(state.request_place_module("fungus_farm", Vector2i(2, 3), 0)["ok"], "Places fungus farm next to core")
 	_assert_eq(int(state.resources["food"]), int(before_place["resources"]["food"]) - 4, "Fungus farm deducts exact food cost")
 	_assert_eq(int(state.resources["soil"]), int(before_place["resources"]["soil"]) - 6, "Fungus farm deducts exact soil cost")
+	var stockpile_goal: Dictionary = state.nest_goal_summary()
+	_assert(String(stockpile_goal.get("key", "")) == "stockpile_entrance", "Entrance stockpile phase has a goal")
+	_assert(String(stockpile_goal.get("action", "")).contains("Small jobs:"), "Entrance stockpile phase gives small choices or feedback goals")
 
 	# Invariant: connected production changes resources through tick simulation.
 	var food_before = int(state.resources["food"])
@@ -156,6 +161,21 @@ func _run() -> void:
 	_assert_same_snapshot(preview_before, _snapshot_state(state), "External stage previews are read-only")
 	_assert_eq(StableRulesScript.highest_pressure_key({"food_pressure": 1.0, "throughput_pressure": 1.0}), "throughput_pressure", "Pressure tie-break uses stable priority")
 	_assert_eq(StableRulesScript.stable_roll("same-seed"), StableRulesScript.stable_roll("same-seed"), "Stable roll is reproducible")
+	var sorter_goal := GoalAdvisorScript.summary({
+		"modules": [
+			{"module_id": "digging_room"},
+			{"module_id": "fungus_farm"},
+			{"module_id": "surface_entrance"},
+			{"module_id": "sorter"},
+		],
+		"hand": [],
+		"module_defs": {},
+		"city_pressure": {"throughput_pressure": 0.65},
+		"last_external_result": {"result": "success"},
+		"elapsed_seconds": 700.0,
+	})
+	_assert(String(sorter_goal.get("label", "")).contains("Bottleneck eased"), "Sorter follow-up goal says the bottleneck eased")
+	_assert(String(sorter_goal.get("action", "")).contains("remaining jam"), "Sorter follow-up goal still points to the next problem")
 	var pre_explore := _snapshot_state(state)
 	var start_result: Dictionary = state.start_external_stage("near_debris")
 	_assert(start_result["ok"], "Starts external exploration when entrance and workers are available")

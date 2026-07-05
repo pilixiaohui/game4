@@ -53,7 +53,7 @@ offset_bottom = 578.0
 offset_left = 860.0
 offset_top = 96.0
 offset_right = 1264.0
-offset_bottom = 430.0
+offset_bottom = 584.0
 script = ExtResource("4_popup")
 
 [node name="ModalDimmer" type="ColorRect" parent="UILayer"]

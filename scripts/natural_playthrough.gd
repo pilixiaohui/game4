@@ -6,6 +6,7 @@ const StableRulesScript := preload("res://scripts/StableRules.gd")
 const SCENARIO := {
 	"name": "first_session_canonical_smoke",
 	"opening_cards": ["straight_corridor", "digging_room", "fungus_farm"],
+	"stockpile_choice_cards": ["corner_corridor"],
 	"entrance_card": "surface_entrance",
 	"post_reward_seconds": 240,
 	"max_total_seconds": 900,
@@ -27,6 +28,7 @@ func _run() -> void:
 		_place_card_via_search(state, String(card_id), "opening module")
 
 	var entrance_card := String(SCENARIO["entrance_card"])
+	_make_stockpile_choice_before_entrance(state, entrance_card)
 	_wait_until_search_placeable(state, entrance_card, 520.0)
 	_place_card_via_search(state, entrance_card, "surface gate")
 	var entrance_time: float = state.elapsed_seconds
@@ -86,6 +88,18 @@ func _wait_until_search_placeable(state, card_id: String, timeout: float) -> voi
 		if float(state.elapsed_seconds) - start_time > timeout:
 			_fail("Timed out waiting to place %s through legal search" % card_id)
 			return
+
+func _make_stockpile_choice_before_entrance(state, _entrance_card: String) -> void:
+	var goal: Dictionary = state.nest_goal_summary()
+	var choices: Array[String] = []
+	for card_id in SCENARIO["stockpile_choice_cards"]:
+		var typed_id := String(card_id)
+		if state.hand.has(typed_id) and not _best_placement(state, typed_id).is_empty():
+			choices.append("optional %s fit" % typed_id)
+	_record(state, "stockpile feedback: %s | %s" % [
+		", ".join(choices) if not choices.is_empty() else "no safe side build yet",
+		String(goal.get("action", "watch food/soil/flow")),
+	])
 
 func _place_card_via_search(state, card_id: String, label: String) -> void:
 	if not failures.is_empty():

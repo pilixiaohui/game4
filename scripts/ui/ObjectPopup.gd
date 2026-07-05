@@ -6,12 +6,15 @@ signal external_stage_selected(stage_id: String)
 var title_label: Label
 var detail_label: Label
 var run_label: Label
+var stage_scroll: ScrollContainer
 var stage_box: VBoxContainer
 
 func _ready() -> void:
 	visible = false
-	custom_minimum_size = Vector2(390, 240)
+	custom_minimum_size = Vector2(404, 420)
 	var root = VBoxContainer.new()
+	root.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	root.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	add_child(root)
 	title_label = Label.new()
 	title_label.add_theme_font_size_override("font_size", 18)
@@ -22,8 +25,16 @@ func _ready() -> void:
 	run_label = Label.new()
 	run_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	root.add_child(run_label)
+	stage_scroll = ScrollContainer.new()
+	stage_scroll.name = "StageScroll"
+	stage_scroll.custom_minimum_size = Vector2(0, 190)
+	stage_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	stage_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	root.add_child(stage_scroll)
 	stage_box = VBoxContainer.new()
-	root.add_child(stage_box)
+	stage_box.name = "StageBox"
+	stage_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	stage_scroll.add_child(stage_box)
 
 func show_module(state: Dictionary, data, stages: Dictionary = {}, active_run: Dictionary = {}, stage_previews: Dictionary = {}, city_status: Dictionary = {}) -> void:
 	visible = true
@@ -64,7 +75,8 @@ func show_module(state: Dictionary, data, stages: Dictionary = {}, active_run: D
 				entry.add_theme_constant_override("separation", 4)
 				var summary = Label.new()
 				summary.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-				summary.text = "%s\n%s, %d workers, %d food\nOutlook: %s   Risk: %s\nHelps: %s\nFinds: %s" % [
+				summary.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+				summary.text = "%s\n%s, %d workers, %d food\nOutlook: %s   Risk: %s\nWhat helps: %s\nLikely finds: %s" % [
 					stage.display_name,
 					_duration_text(float(stage.duration)),
 					stage.worker_required,

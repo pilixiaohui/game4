@@ -63,17 +63,17 @@ static func _first_session_milestone(snapshot: Dictionary) -> Dictionary:
 			var food_gap: int = max(0, int(entrance.build_cost_food) - int(resources.get("food", 0)))
 			var soil_gap: int = max(0, int(entrance.build_cost_soil) - int(resources.get("soil", 0)))
 			var pressure_key := StableRulesScript.highest_pressure_key(snapshot.get("city_pressure", {}))
-			var action := "Need %d food and %d soil. Watch three levers: fungus food, digging soil, and tunnel flow." % [food_gap, soil_gap]
+			var action := _stockpile_action(food_gap, soil_gap, hand, module_defs, resources, pressure_key)
 			if food_gap == 0 and soil_gap > 0:
-				action = "Food is ready; soil is the next gate. Keep digging rooms connected."
+				action = "Food is ready; soil is the next gate. Small jobs: keep digging rooms connected, check tunnel flow, or fit a turn path."
 			elif soil_gap == 0 and food_gap > 0:
-				action = "Soil is ready; food is the next gate. Keep fungus moving through clear tunnels."
+				action = "Soil is ready; food is the next gate. Small jobs: keep fungus moving, check worker drag, or fit a turn path."
 			elif pressure_key == "throughput_pressure":
-				action = "Resources are coming, but tunnels are busy. Let pending loads clear or add a turn path if useful."
+				action = "Resources are coming, but tunnels are busy. Small jobs: place a turn path if it fits, then watch pending loads clear."
 			elif pressure_key == "food_pressure":
-				action = "Food is the slow lever. Keep the Fungus Farm flowing before opening the gate."
+				action = "Food is the slow lever. Small jobs: watch the fungus cycle, keep tunnels clear, then fund the gate."
 			elif pressure_key == "soil_pressure":
-				action = "Soil is the slow lever. Keep the Digging Room flowing before opening the gate."
+				action = "Soil is the slow lever. Small jobs: watch the digging cycle, use new cells, then fund the gate."
 			return _result("stockpile_entrance", 0.75, "Stockpile for the surface gate", action, elapsed)
 	if last_external_result.is_empty():
 		return _result("start_exploration", 0.65, "Choose the first scouting route", "Compare outlook, risk, worker draw, and likely finds before sending workers out.", elapsed)
@@ -91,6 +91,26 @@ static func _result(key: String, value: float, label: String, action: String, el
 		"action": action,
 		"time": elapsed,
 	}
+
+static func _stockpile_action(food_gap: int, soil_gap: int, hand: Array, module_defs: Dictionary, resources: Dictionary, pressure_key: String) -> String:
+	var jobs: Array[String] = []
+	if _can_afford_card("corner_corridor", hand, module_defs, resources):
+		jobs.append("fit a Corner Corridor for the next relief path")
+	elif hand.has("corner_corridor"):
+		jobs.append("save 2 soil for a Corner Corridor option")
+	jobs.append("watch fungus food close +%d" % food_gap)
+	jobs.append("watch digging soil close +%d" % soil_gap)
+	if pressure_key == "throughput_pressure":
+		jobs.append("wait for tunnel loads to clear")
+	elif pressure_key == "worker_pressure":
+		jobs.append("avoid sending workers out yet")
+	return "Need %d food and %d soil. Small jobs: %s." % [food_gap, soil_gap, "; ".join(jobs.slice(0, 3))]
+
+static func _can_afford_card(card_id: String, hand: Array, module_defs: Dictionary, resources: Dictionary) -> bool:
+	if not hand.has(card_id) or not module_defs.has(card_id):
+		return false
+	var data = module_defs[card_id]
+	return int(resources.get("food", 0)) >= data.build_cost_food and int(resources.get("soil", 0)) >= data.build_cost_soil
 
 static func _has_module_id(modules: Array, module_id: String) -> bool:
 	for module in modules:
