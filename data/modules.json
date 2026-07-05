@@ -14,6 +14,8 @@
     "base_cycle_time": 10.0,
     "external_interface": false,
     "tags": ["core"],
+    "reward_tags": ["workers", "storage"],
+    "solves_pressure": {"worker_pressure": 1, "capacity_pressure": 1},
     "rarity": "starter",
     "description_short": "City heart and worker capacity."
   },
@@ -32,6 +34,8 @@
     "base_cycle_time": 10.0,
     "external_interface": false,
     "tags": ["path"],
+    "reward_tags": ["throughput", "expansion"],
+    "solves_pressure": {"throughput_pressure": 1, "expansion_pressure": 1},
     "rarity": "common",
     "description_short": "Moves resources along a straight tunnel."
   },
@@ -50,6 +54,8 @@
     "base_cycle_time": 10.0,
     "external_interface": false,
     "tags": ["path"],
+    "reward_tags": ["throughput", "expansion"],
+    "solves_pressure": {"throughput_pressure": 1, "expansion_pressure": 1},
     "rarity": "common",
     "description_short": "Turns a tunnel around a corner."
   },
@@ -65,9 +71,13 @@
     "output_rates": {"food": 3},
     "storage": {},
     "throughput": 2,
+    "transport_output": 3,
     "base_cycle_time": 10.0,
     "external_interface": false,
     "tags": ["food"],
+    "reward_tags": ["food"],
+    "solves_pressure": {"food_pressure": 2},
+    "creates_pressure": {"worker_pressure": 1, "throughput_pressure": 1, "capacity_pressure": 1},
     "rarity": "common",
     "description_short": "Produces food while connected."
   },
@@ -83,9 +93,15 @@
     "output_rates": {"soil": 3},
     "storage": {},
     "throughput": 2,
+    "transport_output": 3,
     "base_cycle_time": 12.0,
     "external_interface": false,
     "tags": ["soil"],
+    "reward_tags": ["soil", "expansion"],
+    "solves_pressure": {"soil_pressure": 2, "expansion_pressure": 1},
+    "creates_pressure": {"worker_pressure": 1, "throughput_pressure": 1, "capacity_pressure": 1},
+    "excavation_power": 1.0,
+    "excavation_interval": 1.0,
     "rarity": "common",
     "description_short": "Produces soil and expands the nest."
   },
@@ -104,6 +120,8 @@
     "base_cycle_time": 10.0,
     "external_interface": false,
     "tags": ["storage"],
+    "reward_tags": ["storage"],
+    "solves_pressure": {"capacity_pressure": 3},
     "rarity": "common",
     "description_short": "Raises food and soil capacity."
   },
@@ -122,6 +140,9 @@
     "base_cycle_time": 10.0,
     "external_interface": false,
     "tags": ["workers"],
+    "reward_tags": ["workers"],
+    "solves_pressure": {"worker_pressure": 3},
+    "creates_pressure": {"food_pressure": 1},
     "rarity": "common",
     "description_short": "Raises worker capacity."
   },
@@ -140,6 +161,8 @@
     "base_cycle_time": 10.0,
     "external_interface": false,
     "tags": ["support"],
+    "reward_tags": ["throughput"],
+    "solves_pressure": {"throughput_pressure": 3},
     "rarity": "uncommon",
     "description_short": "Improves adjacent production rooms."
   },
@@ -158,6 +181,9 @@
     "base_cycle_time": 10.0,
     "external_interface": true,
     "tags": ["external"],
+    "reward_tags": ["risk", "exploration"],
+    "solves_pressure": {"food_pressure": 1, "soil_pressure": 1},
+    "creates_pressure": {"worker_pressure": 1},
     "rarity": "common",
     "description_short": "Unlocks outside exploration."
   }

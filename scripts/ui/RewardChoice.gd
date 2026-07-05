@@ -26,18 +26,18 @@ func _ready() -> void:
 	cards_box.add_theme_constant_override("separation", 14)
 	root.add_child(cards_box)
 
-func show_choices(card_ids: Array[String], module_defs: Dictionary) -> void:
+func show_choices(card_ids: Array[String], module_defs: Dictionary, reward_context: Dictionary = {}) -> void:
 	visible = true
 	for child in cards_box.get_children():
 		child.queue_free()
 	for i in range(card_ids.size()):
 		var data = module_defs[card_ids[i]]
-		cards_box.add_child(_build_card(i, data))
+		cards_box.add_child(_build_card(i, data, String(reward_context.get(card_ids[i], ""))))
 
 func hide_choices() -> void:
 	visible = false
 
-func _build_card(index: int, data) -> Control:
+func _build_card(index: int, data, reason: String = "") -> Control:
 	var panel = PanelContainer.new()
 	panel.custom_minimum_size = Vector2(230, 245)
 	var card_style := StyleBoxFlat.new()
@@ -63,6 +63,12 @@ func _build_card(index: int, data) -> Control:
 		data.description_short,
 	]
 	root.add_child(details)
+	if reason != "":
+		var reason_label = Label.new()
+		reason_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		reason_label.text = reason
+		reason_label.add_theme_color_override("font_color", Color(1.0, 0.86, 0.45, 1.0))
+		root.add_child(reason_label)
 	var spacer = Control.new()
 	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	root.add_child(spacer)

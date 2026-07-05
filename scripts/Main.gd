@@ -71,7 +71,7 @@ func _refresh_all() -> void:
 	_sync_ants()
 
 func _on_resource_changed(resources: Dictionary, capacities: Dictionary, workers: Dictionary) -> void:
-	resource_label.text = "Food %d/%d   Soil %d/%d   Workers %d free / %d total   Load %d%%" % [
+	resource_label.text = "Food %d/%d   Soil %d/%d   Workers %d free / %d total   Load %d%%   Pressure %s" % [
 		resources["food"],
 		capacities["food"],
 		resources["soil"],
@@ -79,6 +79,7 @@ func _on_resource_changed(resources: Dictionary, capacities: Dictionary, workers
 		workers["free"],
 		workers["total"],
 		int(round(float(workers["satisfaction"]) * 100.0)),
+		_pressure_summary(),
 	]
 	_refresh_hand_affordability()
 	_refresh_selected_popup()
@@ -157,7 +158,7 @@ func _on_module_status_changed(module_state: Dictionary) -> void:
 		module_nodes[uid].update_state(module_state)
 	if uid == selected_module_uid:
 			var data = state.module_defs[module_state["module_id"]]
-			popup.show_module(module_state, data, state.external_stages, state.active_external_run)
+			popup.show_module(module_state, data, state.external_stages, state.active_external_run, state.external_stage_previews())
 	_sync_ants()
 
 func _rebuild_modules() -> void:
@@ -184,7 +185,7 @@ func _on_module_pressed(uid: String) -> void:
 		if module_state["uid"] == uid:
 			var data = state.module_defs[module_state["module_id"]]
 			module_nodes[uid].set_selected(true)
-			popup.show_module(module_state, data, state.external_stages, state.active_external_run)
+			popup.show_module(module_state, data, state.external_stages, state.active_external_run, state.external_stage_previews())
 			return
 
 func _clear_module_selection() -> void:
@@ -203,7 +204,7 @@ func _on_external_run_changed(_run_state: Dictionary) -> void:
 func _on_reward_choice_ready(cards: Array[String]) -> void:
 	popup.hide_popup()
 	modal_dimmer.visible = true
-	reward_choice.show_choices(cards, state.module_defs)
+	reward_choice.show_choices(cards, state.module_defs, state.reward_choice_context)
 	_on_feedback("Exploration returned with module choices")
 
 func _on_reward_picked(index: int) -> void:
@@ -246,5 +247,19 @@ func _refresh_selected_popup() -> void:
 	for module_state in state.modules:
 		if module_state["uid"] == selected_module_uid:
 			var data = state.module_defs[module_state["module_id"]]
-			popup.show_module(module_state, data, state.external_stages, state.active_external_run)
+			popup.show_module(module_state, data, state.external_stages, state.active_external_run, state.external_stage_previews())
 			return
+
+func _pressure_summary() -> String:
+	if state.city_pressure.is_empty():
+		return "stable"
+	var best_key := ""
+	var best_value := -1.0
+	for key in state.city_pressure.keys():
+		var value := float(state.city_pressure[key])
+		if value > best_value:
+			best_key = String(key)
+			best_value = value
+	if best_value <= 0.05:
+		return "stable"
+	return "%s %d%%" % [best_key.replace("_pressure", ""), int(round(best_value * 100.0))]

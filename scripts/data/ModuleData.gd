@@ -32,12 +32,18 @@ const DELTAS := {
 @export var rarity: String = "common"
 @export var description_short: String = ""
 @export var external_interface: bool = false
+@export var transport_output: int = 0
+@export var excavation_power: float = 0.0
+@export var excavation_interval: float = 1.0
 var connectors: Dictionary = _blank_connectors()
 var tags: Array[String] = []
+var reward_tags: Array[String] = []
 var input_rates: Dictionary = {}
 var output_rates: Dictionary = {}
 var storage: Dictionary = {}
 var adjacency_rules: Dictionary = {}
+var solves_pressure: Dictionary = {}
+var creates_pressure: Dictionary = {}
 
 static func _blank_connectors() -> Dictionary:
 	return {TOP: false, RIGHT: false, BOTTOM: false, LEFT: false}
@@ -58,7 +64,13 @@ static func make(
 	p_external_interface: bool = false,
 	p_tags: Array = [],
 	p_rarity: String = "common",
-	p_description: String = ""
+	p_description: String = "",
+	p_reward_tags: Array = [],
+	p_solves_pressure: Dictionary = {},
+	p_creates_pressure: Dictionary = {},
+	p_transport_output: int = -1,
+	p_excavation_power: float = 0.0,
+	p_excavation_interval: float = 1.0
 ):
 	var data = load("res://scripts/data/ModuleData.gd").new()
 	data.id = p_id
@@ -80,8 +92,16 @@ static func make(
 	data.tags.clear()
 	for tag in p_tags:
 		data.tags.append(String(tag))
+	data.reward_tags.clear()
+	for tag in p_reward_tags:
+		data.reward_tags.append(String(tag))
 	data.rarity = p_rarity
 	data.description_short = p_description
+	data.solves_pressure = p_solves_pressure.duplicate(true)
+	data.creates_pressure = p_creates_pressure.duplicate(true)
+	data.transport_output = _rate_total(p_output_rates) if p_transport_output < 0 else p_transport_output
+	data.excavation_power = p_excavation_power
+	data.excavation_interval = max(0.1, p_excavation_interval)
 	return data
 
 static func _rate_total(rates: Dictionary) -> int:

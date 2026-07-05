@@ -30,7 +30,14 @@ var modules: Array[Dictionary] = []
 var excavated: Dictionary = {}
 var occupied: Dictionary = {}
 var reward_choices: Array[String] = []
+var reward_choice_context: Dictionary = {}
 var active_external_run: Dictionary = {}
+var last_external_result: Dictionary = {}
+var city_pressure: Dictionary = {}
+var transport_routes: Dictionary = {}
+var overflow_waste := {"food": 0, "soil": 0}
+var overflow_waste_tick := {"food": 0, "soil": 0}
+var frontier_cells: Dictionary = {}
 var draw_count: int = 0
 var catalog_errors: Array[String] = []
 
@@ -56,9 +63,16 @@ func reset_game() -> void:
 	excavated.clear()
 	occupied.clear()
 	reward_choices.clear()
+	reward_choice_context.clear()
 	active_external_run.clear()
+	last_external_result.clear()
+	transport_routes.clear()
+	overflow_waste = {"food": 0, "soil": 0}
+	overflow_waste_tick = {"food": 0, "soil": 0}
+	frontier_cells.clear()
 	draw_count = 0
 	_excavate_initial_area()
+	_refresh_frontier()
 	_place_initial_core()
 	_recalculate_city_stats()
 	_emit_state()
@@ -113,7 +127,13 @@ func _load_module_definition(row: Dictionary) -> void:
 		bool(row.get("external_interface", false)),
 		Array(row.get("tags", [])),
 		String(row.get("rarity", "common")),
-		String(row.get("description_short", ""))
+		String(row.get("description_short", "")),
+		Array(row.get("reward_tags", row.get("tags", []))),
+		Dictionary(row.get("solves_pressure", {})),
+		Dictionary(row.get("creates_pressure", {})),
+		int(row.get("transport_output", -1)),
+		float(row.get("excavation_power", 0.0)),
+		float(row.get("excavation_interval", 1.0))
 	)
 
 func _load_external_stage(row: Dictionary) -> void:
@@ -134,7 +154,14 @@ func _load_external_stage(row: Dictionary) -> void:
 		_vector2i_from_array(row.get("base_food_reward", [0, 0]), Vector2i.ZERO),
 		_vector2i_from_array(row.get("base_soil_reward", [0, 0]), Vector2i.ZERO),
 		Array(row.get("card_reward_pool", [])),
-		Array(row.get("tags", []))
+		Array(row.get("tags", [])),
+		float(row.get("success_base", 1.0 - float(row.get("danger", 0.15)))),
+		float(row.get("risk", row.get("danger", 0.15))),
+		Dictionary(row.get("reward_weights", {})),
+		Dictionary(row.get("pressure_weight_bonus", {})),
+		float(row.get("partial_resource_ratio", 0.55)),
+		float(row.get("failure_resource_ratio", 0.3)),
+		Array(row.get("guaranteed_slots", ["problem_solver", "stage_theme", "wildcard"]))
 	)
 
 func _connectors_from_row(value, context: String) -> Dictionary:
@@ -170,11 +197,15 @@ func _validate_catalogs() -> void:
 			catalog_errors.append("Module has invalid size: %s" % module_id)
 	for stage_id in external_stages.keys():
 		var stage = external_stages[stage_id]
-		if stage.card_reward_pool.size() != 3:
-			catalog_errors.append("External stage must expose exactly three rewards: %s" % stage_id)
+		if stage.card_reward_pool.size() < 3:
+			catalog_errors.append("External stage must expose at least three rewards: %s" % stage_id)
 		for card_id in stage.card_reward_pool:
 			if not module_defs.has(card_id):
 				catalog_errors.append("External stage %s references unknown reward module: %s" % [stage_id, card_id])
+		if stage.success_base <= 0.0 or stage.success_base > 1.0:
+			catalog_errors.append("External stage has invalid success_base: %s" % stage_id)
+		if stage.risk < 0.0 or stage.risk > 1.0:
+			catalog_errors.append("External stage has invalid risk: %s" % stage_id)
 
 func _excavate_initial_area() -> void:
 	for x in range(2, 8):
@@ -220,8 +251,7 @@ func request_place_module(card_id: String, origin: Vector2i, rotation_steps: int
 	var module = _new_module_state(card_id, origin, rotation_steps)
 	modules.append(module)
 	_mark_occupied(modules.size() - 1)
-	if card_id == "digging_room":
-		_excavate_around(origin, data.rotated_size(rotation_steps), 1)
+	_refresh_frontier()
 	_recalculate_city_stats()
 	module_placed.emit(module.duplicate(true))
 	hand_changed.emit(hand.duplicate())
@@ -230,34 +260,55 @@ func request_place_module(card_id: String, origin: Vector2i, rotation_steps: int
 	return {"ok": true, "reason": "OK", "module": module}
 
 func simulate_tick(delta: float) -> void:
+	overflow_waste_tick = {"food": 0, "soil": 0}
 	if active_external_run.has("id"):
 		active_external_run["remaining"] = max(0.0, float(active_external_run["remaining"]) - delta)
 		if active_external_run["remaining"] <= 0.0:
 			_finish_external_run()
 	_recalculate_city_stats()
+	_rebuild_transport_routes()
 	for i in range(modules.size()):
 		var module = modules[i]
 		var data = module_defs[module["module_id"]]
+		module["worker_effect"] = float(workers["satisfaction"])
 		if data.output_rates.is_empty():
 			module["status"] = "idle"
+			module["last_blocker"] = "none"
 			modules[i] = module
 			continue
 		var path = get_path_to_core(i)
 		if path.is_empty():
 			module["status"] = "disconnected"
+			module["last_blocker"] = "disconnected"
 			modules[i] = module
 			continue
-		var throughput_efficiency = _throughput_efficiency(path, data)
+		var throughput_efficiency = _route_efficiency_for_module(i, path, data)
 		var adjacency_bonus = _adjacency_bonus(i)
-		var efficiency = float(workers["satisfaction"]) * throughput_efficiency * adjacency_bonus
+		var worker_effect = float(workers["satisfaction"])
+		var efficiency = worker_effect * throughput_efficiency * adjacency_bonus
 		module["efficiency"] = efficiency
 		module["path"] = path
 		module["progress"] = float(module.get("progress", 0.0)) + delta * efficiency
-		module["status"] = _status_for_efficiency(efficiency)
+		module["last_blocker"] = _blocker_for_module(i, efficiency, throughput_efficiency, worker_effect)
+		module["status"] = _status_for_module(module, efficiency)
 		while float(module["progress"]) >= data.base_cycle_time:
 			module["progress"] = float(module["progress"]) - data.base_cycle_time
-			_apply_output(data.output_rates, module)
+			_queue_output(data.output_rates, module)
+			if data.excavation_power > 0.0:
+				_apply_excavation_progress(module, data)
 		modules[i] = module
+	_rebuild_transport_routes()
+	_transport_pending_outputs(delta)
+	_recalculate_city_stats()
+	for i in range(modules.size()):
+		var module = modules[i]
+		var route := _route_for_module(i)
+		if not route.is_empty():
+			module["route_load"] = float(route.get("load_ratio", 0.0))
+			if float(route.get("load_ratio", 0.0)) > 1.0 and String(module.get("last_blocker", "none")) == "none":
+				module["last_blocker"] = "bottleneck"
+				module["status"] = "constrained"
+			modules[i] = module
 		module_status_changed.emit(module.duplicate(true))
 	resource_changed.emit(resources.duplicate(), capacities.duplicate(), workers.duplicate())
 
@@ -270,13 +321,172 @@ func _status_for_efficiency(efficiency: float) -> String:
 		return "busy"
 	return "running"
 
-func _apply_output(rates: Dictionary, module: Dictionary) -> void:
+func _status_for_module(module: Dictionary, efficiency: float) -> String:
+	if String(module.get("last_blocker", "none")) in ["bottleneck", "storage_full", "no_workers"]:
+		return "constrained"
+	return _status_for_efficiency(efficiency)
+
+func _queue_output(rates: Dictionary, module: Dictionary) -> void:
+	var pending: Dictionary = module.get("pending_output", {}).duplicate(true)
 	for resource_name in rates.keys():
-		var before = int(resources.get(resource_name, 0))
-		var cap = int(capacities.get(resource_name, before))
-		resources[resource_name] = min(cap, before + int(rates[resource_name]))
-		if int(resources[resource_name]) == before and before >= cap:
-			module["status"] = "storage_full"
+		pending[resource_name] = int(pending.get(resource_name, 0)) + int(rates[resource_name])
+	module["pending_output"] = pending
+
+func _route_efficiency_for_module(module_index: int, path: Array[int], data) -> float:
+	var route := _route_for_module(module_index)
+	var base := _throughput_efficiency(path, data)
+	if route.is_empty():
+		return base
+	var load_ratio := float(route.get("load_ratio", 0.0))
+	if load_ratio <= 1.0:
+		return base
+	return base / load_ratio
+
+func _blocker_for_module(module_index: int, _efficiency: float, throughput_efficiency: float, worker_effect: float) -> String:
+	if worker_effect < 0.98:
+		return "no_workers"
+	var route := _route_for_module(module_index)
+	if not route.is_empty() and float(route.get("load_ratio", 0.0)) > 1.0:
+		return "bottleneck"
+	if throughput_efficiency < 0.98:
+		return "bottleneck"
+	var module: Dictionary = modules[module_index]
+	if _pending_total(module.get("pending_output", {})) > 0 and _capacity_room_for_any_pending(module.get("pending_output", {})) <= 0:
+		return "storage_full"
+	return "none"
+
+func _rebuild_transport_routes() -> void:
+	transport_routes.clear()
+	var node_use := {}
+	for i in range(1, modules.size()):
+		var module: Dictionary = modules[i]
+		var data = module_defs[module["module_id"]]
+		if data.output_rates.is_empty() and _pending_total(module.get("pending_output", {})) <= 0:
+			continue
+		var path := get_path_to_core(i)
+		if path.size() <= 1:
+			continue
+		for module_index in path:
+			node_use[module_index] = int(node_use.get(module_index, 0)) + 1
+	for i in range(1, modules.size()):
+		var module: Dictionary = modules[i]
+		var data = module_defs[module["module_id"]]
+		if data.output_rates.is_empty() and _pending_total(module.get("pending_output", {})) <= 0:
+			continue
+		var path := get_path_to_core(i)
+		if path.size() <= 1:
+			continue
+		var min_throughput := 99
+		var max_shared := 1
+		var bottleneck_module := i
+		for module_index in path:
+			var path_module: Dictionary = modules[module_index]
+			var path_data = module_defs[path_module["module_id"]]
+			if path_data.throughput < min_throughput:
+				min_throughput = path_data.throughput
+				bottleneck_module = module_index
+			max_shared = max(max_shared, int(node_use.get(module_index, 1)))
+		var capacity: int = max(1, int(floor(float(min_throughput) / float(max_shared))))
+		var pending_total: int = _pending_total(module.get("pending_output", {}))
+		var expected_output: int = max(1, int(data.transport_output))
+		var load: float = float(max(pending_total, expected_output)) / float(capacity)
+		transport_routes[String(module["uid"])] = {
+			"module_index": i,
+			"module_uid": String(module["uid"]),
+			"path": path,
+			"capacity": capacity,
+			"load": max(pending_total, expected_output),
+			"load_ratio": load,
+			"bottleneck_module": bottleneck_module,
+		}
+
+func _route_for_module(module_index: int) -> Dictionary:
+	if module_index < 0 or module_index >= modules.size():
+		return {}
+	return transport_routes.get(String(modules[module_index]["uid"]), {})
+
+func _transport_pending_outputs(delta: float) -> void:
+	var route_keys := transport_routes.keys()
+	route_keys.sort()
+	for uid in route_keys:
+		var route: Dictionary = transport_routes[uid]
+		var module_index := int(route["module_index"])
+		if module_index < 0 or module_index >= modules.size():
+			continue
+		var module: Dictionary = modules[module_index]
+		var pending: Dictionary = module.get("pending_output", {}).duplicate(true)
+		var capacity: int = max(1, int(route.get("capacity", 1))) * max(1, int(floor(delta)))
+		var delivered := {}
+		for resource_name in pending.keys():
+			if capacity <= 0:
+				break
+			var amount := int(pending[resource_name])
+			if amount <= 0:
+				continue
+			var moved: int = min(amount, capacity)
+			var accepted := _add_resource_with_capacity(resource_name, moved)
+			delivered[resource_name] = int(delivered.get(resource_name, 0)) + accepted
+			pending[resource_name] = amount - moved
+			capacity -= moved
+			if accepted < moved:
+				module["last_blocker"] = "storage_full"
+				module["status"] = "constrained"
+		for resource_name in pending.keys():
+			if int(pending[resource_name]) <= 0:
+				pending.erase(resource_name)
+		module["pending_output"] = pending
+		module["delivered_this_tick"] = delivered
+		if _pending_total(pending) > 0 and String(module.get("last_blocker", "none")) == "none":
+			module["last_blocker"] = "bottleneck"
+			module["status"] = "constrained"
+		modules[module_index] = module
+	_rebuild_transport_routes()
+
+func _add_resource_with_capacity(resource_name: String, amount: int) -> int:
+	var before := int(resources.get(resource_name, 0))
+	var cap := int(capacities.get(resource_name, before))
+	var accepted: int = min(amount, max(0, cap - before))
+	resources[resource_name] = before + accepted
+	var waste: int = amount - accepted
+	if waste > 0:
+		overflow_waste[resource_name] = int(overflow_waste.get(resource_name, 0)) + waste
+		overflow_waste_tick[resource_name] = int(overflow_waste_tick.get(resource_name, 0)) + waste
+	return accepted
+
+func _pending_total(pending: Dictionary) -> int:
+	var total := 0
+	for amount in pending.values():
+		total += int(amount)
+	return total
+
+func _capacity_room_for_any_pending(pending: Dictionary) -> int:
+	var total := 0
+	for resource_name in pending.keys():
+		total += max(0, int(capacities.get(resource_name, 0)) - int(resources.get(resource_name, 0)))
+	return total
+
+func _apply_excavation_progress(module: Dictionary, data) -> void:
+	module["excavation_progress"] = float(module.get("excavation_progress", 0.0)) + data.excavation_power
+	while float(module["excavation_progress"]) >= data.excavation_interval and not frontier_cells.is_empty():
+		module["excavation_progress"] = float(module["excavation_progress"]) - data.excavation_interval
+		var cell := _next_frontier_cell(module)
+		if cell == Vector2i(-1, -1):
+			return
+		excavated[_cell_key(cell)] = true
+		_refresh_frontier()
+
+func _next_frontier_cell(module: Dictionary) -> Vector2i:
+	var origin: Vector2i = module["origin"]
+	var best := Vector2i(-1, -1)
+	var best_distance := 99999
+	for key in frontier_cells.keys():
+		var parts := String(key).split(",")
+		var cell := Vector2i(int(parts[0]), int(parts[1]))
+		var distance: int = abs(cell.x - origin.x) + abs(cell.y - origin.y)
+		if distance < best_distance:
+			best_distance = distance
+			best = cell
+	return best
 
 func start_external_stage(stage_id: String) -> Dictionary:
 	if not external_stages.has(stage_id):
@@ -292,17 +502,60 @@ func start_external_stage(stage_id: String) -> Dictionary:
 	if int(workers["free"]) < stage.worker_required:
 		return {"ok": false, "reason": "Not enough free workers"}
 	resources["food"] -= stage.food_cost
+	var preview := external_stage_preview(stage_id)
+	var run_seed := "%s:%d:%d:%d" % [stage.id, draw_count, modules.size(), int(resources["food"]) + int(resources["soil"])]
 	active_external_run = {
 		"id": stage.id,
 		"display_name": stage.display_name,
 		"remaining": stage.duration,
 		"duration": stage.duration,
 		"worker_required": stage.worker_required,
+		"success_chance": preview["success_chance"],
+		"risk": stage.risk,
+		"modifiers": preview["modifiers"],
+		"city_pressure_snapshot": city_pressure.duplicate(true),
+		"seed": run_seed,
+		"result_roll": _deterministic_roll(run_seed),
 	}
 	_recalculate_city_stats()
 	external_run_started.emit(active_external_run.duplicate(true))
 	resource_changed.emit(resources.duplicate(), capacities.duplicate(), workers.duplicate())
 	return {"ok": true, "run": active_external_run.duplicate(true)}
+
+func external_stage_preview(stage_id: String) -> Dictionary:
+	if not external_stages.has(stage_id):
+		return {}
+	var stage = external_stages[stage_id]
+	_recalculate_city_stats()
+	var free_worker_ratio := 1.0
+	if int(workers["total"]) > 0:
+		free_worker_ratio = float(max(0, int(workers["free"]))) / float(max(1, int(workers["total"])))
+	var free_worker_bonus := (free_worker_ratio - 0.35) * 0.18
+	var capacity_room := 0.0
+	for resource_name in ["food", "soil"]:
+		capacity_room += float(max(0, int(capacities[resource_name]) - int(resources[resource_name]))) / float(max(1, int(capacities[resource_name])))
+	var capacity_bonus := clampf((capacity_room / 2.0 - 0.25) * 0.12, -0.06, 0.08)
+	var instability_penalty := 0.0
+	for key in ["worker_pressure", "capacity_pressure", "throughput_pressure"]:
+		instability_penalty += float(city_pressure.get(key, 0.0)) * 0.04
+	var entrance_bonus := 0.04 if has_external_entrance() else 0.0
+	var chance := clampf(stage.success_base - stage.risk * 0.35 + free_worker_bonus + capacity_bonus + entrance_bonus - instability_penalty, 0.1, 0.9)
+	return {
+		"success_chance": chance,
+		"modifiers": {
+			"free_workers": free_worker_bonus,
+			"capacity_room": capacity_bonus,
+			"connected_entrance": entrance_bonus,
+			"city_pressure": -instability_penalty,
+		},
+		"risk": stage.risk,
+	}
+
+func external_stage_previews() -> Dictionary:
+	var previews := {}
+	for stage_id in external_stages.keys():
+		previews[stage_id] = external_stage_preview(stage_id)
+	return previews
 
 func choose_reward(index: int) -> Dictionary:
 	if index < 0 or index >= reward_choices.size():
@@ -312,6 +565,7 @@ func choose_reward(index: int) -> Dictionary:
 	var card_id = reward_choices[index]
 	hand.append(card_id)
 	reward_choices.clear()
+	reward_choice_context.clear()
 	hand_changed.emit(hand.duplicate())
 	reward_chosen.emit(card_id)
 	return {"ok": true, "card_id": card_id}
@@ -358,16 +612,21 @@ func active_transport_routes() -> Array[Dictionary]:
 	var routes: Array[Dictionary] = []
 	for i in range(1, modules.size()):
 		var module = modules[i]
-		if String(module.get("status", "")) in ["running", "busy", "constrained"]:
+		if String(module.get("status", "")) in ["running", "busy", "constrained"] or _pending_total(module.get("pending_output", {})) > 0:
 			var path = get_path_to_core(i)
 			if path.size() > 1:
 				var points: Array[Vector2] = []
 				for module_index in path:
 					points.append(module_center_world(module_index))
+				var route := _route_for_module(i)
 				routes.append({
 					"key": _transport_route_key(i, path),
 					"module_uid": String(module["uid"]),
 					"points": points,
+					"load_ratio": float(route.get("load_ratio", 0.0)),
+					"capacity": int(route.get("capacity", 0)),
+					"load": int(route.get("load", 0)),
+					"bottleneck_module": int(route.get("bottleneck_module", i)),
 				})
 	return routes
 
@@ -385,22 +644,126 @@ func module_center_world(module_index: int, cell_size: int = 56) -> Vector2:
 
 func _finish_external_run() -> void:
 	var stage = external_stages[active_external_run["id"]]
-	var success = stage.danger < 0.5
-	var food_gain = stage.base_food_reward.x if success else int(stage.base_food_reward.x * 0.3)
-	var soil_gain = stage.base_soil_reward.x if success else int(stage.base_soil_reward.x * 0.3)
-	resources["food"] = min(capacities["food"], resources["food"] + food_gain)
-	resources["soil"] = min(capacities["soil"], resources["soil"] + soil_gain)
-	active_external_run["success"] = success
+	var chance := float(active_external_run.get("success_chance", 0.5))
+	var roll := float(active_external_run.get("result_roll", 1.0))
+	var result := "failure"
+	if roll <= chance:
+		result = "success"
+	elif roll <= min(0.95, chance + 0.22):
+		result = "partial"
+	var resource_ratio := 1.0
+	if result == "partial":
+		resource_ratio = stage.partial_resource_ratio
+	elif result == "failure":
+		resource_ratio = stage.failure_resource_ratio
+	var food_gain := _reward_amount(stage.id, "food", stage.base_food_reward, resource_ratio)
+	var soil_gain := _reward_amount(stage.id, "soil", stage.base_soil_reward, resource_ratio)
+	var food_accepted := _add_resource_with_capacity("food", food_gain)
+	var soil_accepted := _add_resource_with_capacity("soil", soil_gain)
+	active_external_run["result"] = result
+	active_external_run["success"] = result == "success"
+	active_external_run["resource_gain"] = {"food": food_accepted, "soil": soil_accepted}
+	active_external_run["resource_waste"] = {"food": food_gain - food_accepted, "soil": soil_gain - soil_accepted}
 	external_run_finished.emit(active_external_run.duplicate(true))
-	if success:
-		reward_choices = []
-		for card_id in stage.card_reward_pool:
-			if module_defs.has(card_id) and reward_choices.size() < 3:
-				reward_choices.append(card_id)
+	last_external_result = active_external_run.duplicate(true)
+	if result in ["success", "partial"]:
+		_generate_reward_choices(stage, result)
 		reward_choice_ready.emit(reward_choices.duplicate())
 	active_external_run.clear()
 	_recalculate_city_stats()
 	resource_changed.emit(resources.duplicate(), capacities.duplicate(), workers.duplicate())
+
+func _reward_amount(stage_id: String, resource_name: String, reward_range: Vector2i, ratio: float) -> int:
+	if reward_range.x <= 0 and reward_range.y <= 0:
+		return 0
+	var roll := _deterministic_roll("%s:%s:%d" % [stage_id, resource_name, draw_count])
+	var base := reward_range.x + int(round(float(max(0, reward_range.y - reward_range.x)) * roll))
+	return int(round(float(base) * ratio))
+
+func _generate_reward_choices(stage, result: String) -> void:
+	reward_choices.clear()
+	reward_choice_context.clear()
+	var pressure_key := _highest_pressure_key()
+	_add_best_reward_for_pressure(stage.card_reward_pool, pressure_key)
+	_add_best_reward_for_tags(stage.card_reward_pool, stage.tags, "Matches the outside site theme")
+	_add_weighted_reward(stage.card_reward_pool, "%s:%s:%d" % [stage.id, result, draw_count])
+	if result == "partial" and reward_choices.size() > 0:
+		var card_id := reward_choices[0]
+		reward_choice_context[card_id] = "%s after a partial return" % String(reward_choice_context.get(card_id, "Stabilizes the city"))
+	for card_id in stage.card_reward_pool:
+		if reward_choices.size() >= 3:
+			break
+		if module_defs.has(card_id) and not reward_choices.has(card_id):
+			reward_choices.append(card_id)
+			reward_choice_context[card_id] = "Keeps options open"
+	draw_count += 1
+
+func _add_best_reward_for_pressure(pool: Array[String], pressure_key: String) -> void:
+	var best_id := ""
+	var best_score := -9999.0
+	for card_id in pool:
+		if not module_defs.has(card_id) or reward_choices.has(card_id):
+			continue
+		var data = module_defs[card_id]
+		var score := float(data.solves_pressure.get(pressure_key, 0)) * 3.0
+		for tag in data.reward_tags:
+			if _tag_matches_pressure(String(tag), pressure_key):
+				score += 1.0
+		if score > best_score:
+			best_score = score
+			best_id = card_id
+	if best_id != "":
+		reward_choices.append(best_id)
+		reward_choice_context[best_id] = _pressure_reason(pressure_key)
+
+func _add_best_reward_for_tags(pool: Array[String], tags: Array[String], reason: String) -> void:
+	var best_id := ""
+	var best_score := -9999.0
+	for card_id in pool:
+		if not module_defs.has(card_id) or reward_choices.has(card_id):
+			continue
+		var data = module_defs[card_id]
+		var score := 0.0
+		for tag in data.reward_tags:
+			if tags.has(tag):
+				score += 2.0
+		for tag in data.tags:
+			if tags.has(tag):
+				score += 1.0
+		if score > best_score:
+			best_score = score
+			best_id = card_id
+	if best_id != "":
+		reward_choices.append(best_id)
+		reward_choice_context[best_id] = reason
+
+func _add_weighted_reward(pool: Array[String], seed: String) -> void:
+	var weighted: Array[Dictionary] = []
+	var total := 0.0
+	var pressure_key := _highest_pressure_key()
+	var stage_data = external_stages[active_external_run.get("id", "")]
+	for card_id in pool:
+		if not module_defs.has(card_id) or reward_choices.has(card_id):
+			continue
+		var data = module_defs[card_id]
+		var weight := 1.0
+		for tag in data.reward_tags:
+			weight += float(stage_data.reward_weights.get(tag, 0.0))
+		for pressure in city_pressure.keys():
+			if data.solves_pressure.has(pressure):
+				weight += float(city_pressure[pressure]) * float(stage_data.pressure_weight_bonus.get(pressure, 0.0))
+		weight += float(data.solves_pressure.get(pressure_key, 0)) * 2.0
+		total += weight
+		weighted.append({"id": card_id, "ceiling": total})
+	if weighted.is_empty():
+		return
+	var roll := _deterministic_roll(seed) * total
+	for item in weighted:
+		if roll <= float(item["ceiling"]):
+			var card_id := String(item["id"])
+			reward_choices.append(card_id)
+			reward_choice_context[card_id] = "Weighted by current nest pressure"
+			return
 
 func _new_module_state(card_id: String, origin: Vector2i, rotation_steps: int) -> Dictionary:
 	return {
@@ -410,6 +773,12 @@ func _new_module_state(card_id: String, origin: Vector2i, rotation_steps: int) -
 		"rotation": posmod(rotation_steps, 4),
 		"status": "idle",
 		"efficiency": 1.0,
+		"worker_effect": 1.0,
+		"last_blocker": "none",
+		"pending_output": {},
+		"delivered_this_tick": {},
+		"route_load": 0.0,
+		"excavation_progress": 0.0,
 		"progress": 0.0,
 		"path": [],
 	}
@@ -528,6 +897,116 @@ func _recalculate_city_stats() -> void:
 		"free": max(0, total_workers - worker_demand - exploring),
 		"satisfaction": 1.0 if worker_demand == 0 else min(1.0, float(max(0, total_workers - exploring)) / float(worker_demand)),
 	}
+	_rebuild_transport_routes()
+	_recalculate_city_pressure()
+
+func _recalculate_city_pressure() -> void:
+	var next_food_cost := _next_build_cost("food")
+	var next_soil_cost := _next_build_cost("soil")
+	var food_ratio := float(resources["food"]) / float(max(1, capacities["food"]))
+	var soil_ratio := float(resources["soil"]) / float(max(1, capacities["soil"]))
+	var max_route_load := 0.0
+	for route in transport_routes.values():
+		max_route_load = max(max_route_load, float(route.get("load_ratio", 0.0)))
+	var expansion_blocked := _has_affordable_blocked_card()
+	city_pressure = {
+		"food_pressure": clampf((0.35 - food_ratio) * 2.0 + (0.35 if int(resources["food"]) < next_food_cost else 0.0), 0.0, 1.0),
+		"soil_pressure": clampf((0.35 - soil_ratio) * 2.0 + (0.35 if int(resources["soil"]) < next_soil_cost else 0.0), 0.0, 1.0),
+		"worker_pressure": clampf((1.0 - float(workers["satisfaction"])) + (0.25 if int(workers["exploring"]) > 0 else 0.0), 0.0, 1.0),
+		"capacity_pressure": clampf(max(food_ratio, soil_ratio) - 0.75 + float(_overflow_tick_total()) * 0.1, 0.0, 1.0),
+		"throughput_pressure": clampf(max_route_load - 0.85, 0.0, 1.0),
+		"expansion_pressure": 1.0 if expansion_blocked else 0.0,
+	}
+
+func _next_build_cost(resource_name: String) -> int:
+	var best := 999
+	for card_id in hand:
+		if not module_defs.has(card_id):
+			continue
+		var data = module_defs[card_id]
+		var cost: int = data.build_cost_food if resource_name == "food" else data.build_cost_soil
+		if cost > 0:
+			best = min(best, cost)
+	return 0 if best == 999 else best
+
+func _has_affordable_blocked_card() -> bool:
+	for card_id in hand:
+		if not module_defs.has(card_id):
+			continue
+		var data = module_defs[card_id]
+		if int(resources["food"]) < data.build_cost_food or int(resources["soil"]) < data.build_cost_soil:
+			continue
+		if not _has_any_legal_position(card_id):
+			return true
+	return false
+
+func _has_any_legal_position(card_id: String) -> bool:
+	for x in range(GRID_SIZE.x):
+		for y in range(GRID_SIZE.y):
+			for rotation in range(4):
+				var result := can_place_module(card_id, Vector2i(x, y), rotation)
+				if bool(result.get("ok", false)):
+					return true
+	return false
+
+func _overflow_tick_total() -> int:
+	var total := 0
+	for amount in overflow_waste_tick.values():
+		total += int(amount)
+	return total
+
+func _highest_pressure_key() -> String:
+	var best_key := "food_pressure"
+	var best_value := -1.0
+	for key in city_pressure.keys():
+		var value := float(city_pressure[key])
+		if value > best_value:
+			best_value = value
+			best_key = String(key)
+	return best_key
+
+func _tag_matches_pressure(tag: String, pressure_key: String) -> bool:
+	return (
+		(tag == "food" and pressure_key == "food_pressure")
+		or (tag == "soil" and pressure_key == "soil_pressure")
+		or (tag == "workers" and pressure_key == "worker_pressure")
+		or (tag == "storage" and pressure_key == "capacity_pressure")
+		or (tag == "throughput" and pressure_key == "throughput_pressure")
+		or (tag == "expansion" and pressure_key == "expansion_pressure")
+	)
+
+func _pressure_reason(pressure_key: String) -> String:
+	match pressure_key:
+		"food_pressure":
+			return "Relieves food pressure"
+		"soil_pressure":
+			return "Relieves soil pressure"
+		"worker_pressure":
+			return "Relieves worker pressure"
+		"capacity_pressure":
+			return "Relieves storage pressure"
+		"throughput_pressure":
+			return "Relieves tunnel bottlenecks"
+		"expansion_pressure":
+			return "Opens more build space"
+	return "Relieves current nest pressure"
+
+func _deterministic_roll(seed_text: String) -> float:
+	var value: int = abs(hash(seed_text))
+	return float(value % 1000) / 999.0
+
+func _refresh_frontier() -> void:
+	frontier_cells.clear()
+	for key in excavated.keys():
+		var parts := String(key).split(",")
+		var cell := Vector2i(int(parts[0]), int(parts[1]))
+		for direction in ModuleDataScript.DIRECTIONS:
+			var neighbor: Vector2i = cell + ModuleDataScript.DELTAS[direction]
+			if neighbor.x < 0 or neighbor.y < 0 or neighbor.x >= GRID_SIZE.x or neighbor.y >= GRID_SIZE.y:
+				continue
+			var neighbor_key := _cell_key(neighbor)
+			if not excavated.has(neighbor_key):
+				frontier_cells[neighbor_key] = true
 
 func _excavate_around(origin: Vector2i, size: Vector2i, radius: int) -> void:
 	for x in range(origin.x - radius, origin.x + size.x + radius):
