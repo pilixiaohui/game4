@@ -499,8 +499,8 @@ func start_external_stage(stage_id: String) -> Dictionary:
 	_recalculate_city_stats()
 	if resources["food"] < stage.food_cost:
 		return {"ok": false, "reason": "Not enough food"}
-	if int(workers["free"]) < stage.worker_required:
-		return {"ok": false, "reason": "Not enough free workers"}
+	if int(workers["total"]) < stage.worker_required:
+		return {"ok": false, "reason": "Not enough workers"}
 	resources["food"] -= stage.food_cost
 	var preview := external_stage_preview(stage_id)
 	var run_seed := "%s:%d:%d:%d" % [stage.id, draw_count, modules.size(), int(resources["food"]) + int(resources["soil"])]

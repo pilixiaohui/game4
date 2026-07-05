@@ -65,8 +65,12 @@ func _run() -> void:
 	# Invariant: connected production changes resources through tick simulation.
 	var food_before = int(state.resources["food"])
 	var soil_before = int(state.resources["soil"])
+	var observed_pending_output := false
 	for i in range(60):
 		state.simulate_tick(1.0)
+		for module_state in state.modules:
+			if _pending_total(module_state.get("pending_output", {})) > 0:
+				observed_pending_output = true
 	_assert(int(state.resources["food"]) > food_before, "Fungus farm produces food")
 	_assert(int(state.resources["soil"]) > soil_before, "Digging room produces soil")
 	var fungus_index := _module_index(state, "fungus_farm")
@@ -75,6 +79,8 @@ func _run() -> void:
 		var fungus_state: Dictionary = state.modules[fungus_index]
 		_assert(fungus_state.has("pending_output"), "Production module tracks pending output")
 		_assert(fungus_state.has("delivered_this_tick"), "Production module tracks transported delivery")
+		_assert(String(fungus_state.get("last_blocker", "")) == "bottleneck", "Low throughput production exposes a bottleneck blocker")
+		_assert(observed_pending_output, "Low throughput production leaves pending output during the production cycle")
 	_assert(not state.transport_routes.is_empty(), "Transport routes are tracked for active production")
 	_assert(state.city_pressure.has("throughput_pressure"), "City pressure includes throughput pressure")
 
@@ -134,7 +140,12 @@ func _run() -> void:
 	shortage_state.queue_free()
 
 	var chance_normal := float(state.external_stage_preview("near_debris")["success_chance"])
-	_assert(chance_normal > 0.1 and chance_normal < 0.9, "Exploration preview exposes bounded success chance")
+	var chance_loose := float(state.external_stage_preview("loose_soil")["success_chance"])
+	var chance_old := float(state.external_stage_preview("old_root")["success_chance"])
+	_assert(_bounded_chance(chance_normal), "Near debris success chance is bounded")
+	_assert(_bounded_chance(chance_loose), "Loose soil success chance is bounded")
+	_assert(_bounded_chance(chance_old), "Old root success chance is bounded")
+	_assert(chance_normal != chance_loose or chance_loose != chance_old, "Different stages expose different success chances")
 	var pre_explore := _snapshot_state(state)
 	var start_result: Dictionary = state.start_external_stage("near_debris")
 	_assert(start_result["ok"], "Starts external exploration when entrance and workers are available")
@@ -162,6 +173,20 @@ func _run() -> void:
 	_assert(state.hand.size() == hand_before + 1, "Reward card enters hand")
 	_assert(state.hand.has(chosen_card), "Chosen reward card is the card added to hand")
 	_assert(state.reward_choices.is_empty(), "Choosing a reward clears the other choices")
+
+	var full_hand_state = GameStateScript.new()
+	root.add_child(full_hand_state)
+	full_hand_state.reset_game()
+	full_hand_state.reward_choices.clear()
+	full_hand_state.reward_choices.append("fungus_farm")
+	full_hand_state.reward_choices.append("storage_chamber")
+	full_hand_state.reward_choices.append("nursery")
+	while full_hand_state.hand.size() < 7:
+		full_hand_state.hand.append("straight_corridor")
+	var full_hand_before := _snapshot_state(full_hand_state)
+	_assert(not full_hand_state.choose_reward(0)["ok"], "Full hand rejects reward choice")
+	_assert_same_snapshot(full_hand_before, _snapshot_state(full_hand_state), "Full hand reward rejection has no side effects")
+	full_hand_state.queue_free()
 
 	# Invariant: exploration outcomes are reproducible and have three result bands.
 	var partial_state = GameStateScript.new()
@@ -222,13 +247,21 @@ func _run() -> void:
 	root.add_child(visible_impact_state)
 	visible_impact_state.reset_game()
 	_build_exploration_ready_state_without_nursery(visible_impact_state)
-	_assert(visible_impact_state.start_external_stage("near_debris")["ok"], "Visible impact setup starts exploration")
+	_assert(int(visible_impact_state.workers["free"]) < int(visible_impact_state.external_stages["loose_soil"].worker_required), "Impact setup has fewer free workers than exploration requires")
+	var before_explore_satisfaction := float(visible_impact_state.workers["satisfaction"])
+	var before_explore_fungus_index := _module_index(visible_impact_state, "fungus_farm")
+	var before_explore_efficiency := 1.0
+	if before_explore_fungus_index >= 0:
+		before_explore_efficiency = float(visible_impact_state.modules[before_explore_fungus_index].get("efficiency", 1.0))
+	_assert(visible_impact_state.start_external_stage("loose_soil")["ok"], "Exploration can draw workers from active production when total workers are enough")
 	visible_impact_state.simulate_tick(1.0)
 	var impacted_fungus_index := _module_index(visible_impact_state, "fungus_farm")
 	_assert(impacted_fungus_index >= 0, "Visible impact setup has fungus farm")
 	if impacted_fungus_index >= 0:
 		var impacted_fungus: Dictionary = visible_impact_state.modules[impacted_fungus_index]
-		_assert(float(impacted_fungus["efficiency"]) < 1.0, "Exploration visibly lowers production module efficiency")
+		_assert(float(visible_impact_state.workers["satisfaction"]) < before_explore_satisfaction, "Exploration lowers global worker satisfaction")
+		_assert(float(impacted_fungus["worker_effect"]) < 1.0, "Exploration lowers production module worker effect")
+		_assert(float(impacted_fungus["efficiency"]) < before_explore_efficiency, "Exploration visibly lowers production module efficiency")
 		_assert(String(impacted_fungus["last_blocker"]) == "no_workers", "Exploration exposes no_workers blocker on production module")
 	var impact_summary: Dictionary = visible_impact_state.production_impact_summary()
 	_assert(float(impact_summary["worker_satisfaction"]) < 1.0, "Production impact summary exposes global worker satisfaction")
@@ -303,6 +336,15 @@ func _pending_outputs_snapshot(state) -> Array:
 	for module in state.modules:
 		result.append(module.get("pending_output", {}).duplicate(true))
 	return result
+
+func _pending_total(pending: Dictionary) -> int:
+	var total := 0
+	for amount in pending.values():
+		total += int(amount)
+	return total
+
+func _bounded_chance(value: float) -> bool:
+	return value >= 0.1 and value <= 0.9
 
 func _module_index(state, module_id: String) -> int:
 	for i in range(state.modules.size()):
